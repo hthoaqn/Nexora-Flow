@@ -1,304 +1,720 @@
 // @ts-nocheck
+'use client'
+
 /**
- * @license
- * SPDX-License-Identifier: Apache-2.0
+ * Startup home — same density as Intake overview:
+ * path pills → one primary CTA → optional evaluation strip (M5–9) → recent lists.
  */
 
-import React, { useEffect, useState } from 'react';
-import { useNavigate, Link as RouterLink } from 'react-router-dom';
-import { api } from '../api';
-import { useStartupStore } from '../store/useStartupStore';
-import { useAuthStore } from '../store/useAuthStore';
-import { StartupDashboardDTO } from '../../types';
+import React, { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { api } from '../api'
+import { useStartupStore } from '../store/useStartupStore'
+import { useAuthStore } from '../store/useAuthStore'
+import { usePortalI18n } from '../i18n'
 import {
-  Sparkles,
-  Link2,
-  CheckCircle,
-  AlertTriangle,
   ArrowRight,
-  TrendingUp,
+  CheckCircle2,
+  Circle,
+  Sparkles,
+  UserRound,
+  Link2,
+  Gamepad2,
+  Handshake,
+  Upload,
+  RefreshCw,
   Award,
-  Building,
-  HelpCircle,
-} from 'lucide-react';
+  MessageSquare,
+  ClipboardCheck,
+  Video,
+  Target,
+} from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Progress } from '@/components/ui/progress'
+import {
+  isInvestorPipelineEnabled,
+  isValidationEnabled,
+} from '@/investor/flags'
+import { listEvaluationCases } from '@/investor/lib/evaluationStore'
+import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
+
+function caseNextAction(c, tx) {
+  const st = String(c.status || '')
+  const round = Number(c.currentRound) || 0
+  if (st === 'waiting_for_startup_acceptance') {
+    return {
+      label: tx(
+        'Chấp nhận hành trình kiểm chứng',
+        'Accept validation journey',
+      ),
+      body: tx(
+        'Đọc điều khoản · consent ghi hình — không tự động từ Matching.',
+        'Review terms · recording consent — never auto from Matching.',
+      ),
+      icon: ClipboardCheck,
+      to: `/evaluations/${c.id}`,
+    }
+  }
+  if (st === 'round_1_ready' || st === 'round_1_in_progress') {
+    return {
+      label: tx('Vòng 1 — Pitch video', 'Round 1 — Video pitch'),
+      body: tx(
+        'Ghi / nộp pitch · AI hỏi đáp.',
+        'Record / submit pitch · AI Q&A.',
+      ),
+      icon: Video,
+      to: `/evaluations/${c.id}/pitch`,
+    }
+  }
+  if (st === 'round_1_submitted' || st === 'waiting_for_investor_review') {
+    return {
+      label: tx('Chờ nhà đầu tư duyệt pitch', 'Wait for investor pitch review'),
+      body: tx(
+        'Pitch đã nộp. Theo dõi trạng thái case.',
+        'Pitch submitted. Track case status.',
+      ),
+      icon: ClipboardCheck,
+      to: `/evaluations/${c.id}`,
+    }
+  }
+  if (round >= 2 || /sim|round_2/i.test(st)) {
+    return {
+      label: tx('Vòng 2 — Mô phỏng kinh doanh', 'Round 2 — Business sim'),
+      body: tx(
+        'Ra quyết định theo kịch bản (Module 7).',
+        'Decide by scenario (Module 7).',
+      ),
+      icon: Gamepad2,
+      to: `/evaluations/${c.id}`,
+    }
+  }
+  if (round >= 3 || /proof|round_3/i.test(st)) {
+    return {
+      label: tx('Vòng 3 — Video minh chứng', 'Round 3 — Proof video'),
+      body: tx(
+        'Nộp video chứng minh sản phẩm (Module 8).',
+        'Submit product proof video (Module 8).',
+      ),
+      icon: Target,
+      to: `/evaluations/${c.id}`,
+    }
+  }
+  if (st === 'completed') {
+    return {
+      label: tx('Hoàn tất kiểm chứng', 'Evaluation complete'),
+      body: tx('Xem kết quả / tóm tắt.', 'View result / summary.'),
+      icon: CheckCircle2,
+      to: `/evaluations/${c.id}`,
+    }
+  }
+  return {
+    label: tx('Mở hồ sơ kiểm chứng', 'Open evaluation case'),
+    body: tx(
+      'Pitch · mô phỏng · minh chứng · quyết định cuối.',
+      'Pitch · simulation · proof · final decision.',
+    ),
+    icon: ClipboardCheck,
+    to: `/evaluations/${c.id}`,
+  }
+}
 
 export default function Dashboard() {
-  const navigate = useNavigate();
-  const { user } = useAuthStore();
-  const { isDirty, confirmedProfile, setConfirmedProfile } = useStartupStore();
+  const navigate = useNavigate()
+  const { user } = useAuthStore()
+  const { isDirty, confirmedProfile, setConfirmedProfile } = useStartupStore()
+  const { t, lang } = usePortalI18n()
+  const tx = (vi, en) => (lang === 'en' ? en : vi)
+  const invOn = isInvestorPipelineEnabled()
+  const validationOn = isValidationEnabled()
 
-  const [data, setData] = useState<StartupDashboardDTO | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [sandboxCompleted, setSandboxCompleted] = useState(false)
+  const [runningMatch, setRunningMatch] = useState(false)
+  const [evalCases, setEvalCases] = useState([])
 
-  const fetchDashboard = async () => {
+  const refreshSandboxProgress = async () => {
+    const uid = user?.id
+    if (!uid) return
     try {
-      const res = await api.get('/startup/dashboard');
-      if (res.data && res.data.success) {
-        setData(res.data.data);
+      const { isSandboxCompleted, markSandboxCompleted } = await import(
+        '../lib/sandboxProgress'
+      )
+      let done = isSandboxCompleted(uid)
+      try {
+        const res = await api.get('/startup/sandbox/active')
+        if (res.data?.success && res.data.data) {
+          const sim = res.data.data
+          const st = String(sim.status || '').toLowerCase()
+          if (st === 'completed' || sim.report) {
+            done = true
+            markSandboxCompleted(uid, { simId: sim.id })
+          }
+        }
+      } catch {
+        /* keep */
       }
-    } catch (e) {
-      console.error('Failed to load dashboard', e);
+      setSandboxCompleted(done)
+    } catch {
+      setSandboxCompleted(false)
+    }
+  }
+
+  const load = async () => {
+    try {
+      const [dash, prof] = await Promise.all([
+        api.get('/startup/dashboard').catch(() => null),
+        api.get('/startup/profile').catch(() => null),
+      ])
+      if (dash?.data?.success) {
+        const raw = dash.data.data || {}
+        const counts = raw.connectionCounts || {}
+        setData({
+          ...raw,
+          totalMatches: raw.totalMatches ?? raw.matchCount ?? 0,
+          highMatchCount: raw.highMatchCount ?? 0,
+          pendingConnections:
+            raw.pendingConnections ?? counts.pending ?? counts.PENDING ?? 0,
+          acceptedConnections:
+            raw.acceptedConnections ?? counts.accepted ?? counts.ACCEPTED ?? 0,
+          profileCompletion: raw.profileCompletion ?? 0,
+          recentMatches: Array.isArray(raw.recentMatches)
+            ? raw.recentMatches
+            : [],
+          recentConnections: Array.isArray(raw.recentConnections)
+            ? raw.recentConnections
+            : [],
+        })
+      }
+      if (prof?.data?.success && prof.data.data) {
+        setConfirmedProfile(prof.data.data)
+      } else if (prof?.data?.success && !prof.data.data) {
+        setConfirmedProfile(null)
+      }
+      if (validationOn && user?.id) {
+        setEvalCases(listEvaluationCases(user.id) || [])
+      }
     } finally {
-      setLoading(false);
+      setLoading(false)
+      void refreshSandboxProgress()
     }
-  };
-
-  const loadConfirmedProfile = async () => {
-    try {
-      const res = await api.get('/startup/profile');
-      if (res.data && res.data.success) {
-        setConfirmedProfile(res.data.data);
-      }
-    } catch (e) {
-      console.error('Failed to load confirmed profile', e);
-    }
-  };
+  }
 
   useEffect(() => {
-    fetchDashboard();
-    loadConfirmedProfile();
-  }, [isDirty]);
+    void load()
+  }, [isDirty, user?.id])
+
+  useEffect(() => {
+    const onProgress = () => void refreshSandboxProgress()
+    window.addEventListener('nf:sandbox-progress', onProgress)
+    window.addEventListener('focus', () => {
+      void refreshSandboxProgress()
+      if (validationOn && user?.id)
+        setEvalCases(listEvaluationCases(user.id) || [])
+    })
+    return () => {
+      window.removeEventListener('nf:sandbox-progress', onProgress)
+    }
+  }, [user?.id, validationOn])
+
+  const completion = Number(data?.profileCompletion || 0)
+  const hasProfile = !!confirmedProfile
+  const matches = Number(data?.totalMatches || 0)
+  const highMatches = Number(data?.highMatchCount || 0)
+  const pending = Number(data?.pendingConnections || 0)
+  const accepted = Number(data?.acceptedConnections || 0)
+  const recentMatches = data?.recentMatches || []
+  const recentConnections = data?.recentConnections || []
+  const startupName =
+    confirmedProfile?.startupName || data?.startupName || t.unnamed
+
+  const activeCases = useMemo(
+    () =>
+      evalCases.filter(
+        (c) =>
+          c.status !== 'completed' &&
+          c.status !== 'rejected' &&
+          c.status !== 'withdrawn',
+      ),
+    [evalCases],
+  )
+  const topCase = activeCases[0]
+  const topCaseAction = topCase ? caseNextAction(topCase, tx) : null
+
+  /** Primary = evaluation case first (M5–9), else classic partner path */
+  const primary = useMemo(() => {
+    if (topCase && topCaseAction) {
+      return {
+        title: topCaseAction.label,
+        body: `${topCase.investor?.name || tx('Nhà đầu tư', 'Investor')} · ${topCaseAction.body}`,
+        cta: tx('Tiếp tục kiểm chứng', 'Continue evaluation'),
+        to: topCaseAction.to,
+        icon: topCaseAction.icon,
+        tone: 'eval',
+      }
+    }
+    if (!hasProfile) {
+      return {
+        title: tx('Bước 1 — Tạo hồ sơ', 'Step 1 — Create profile'),
+        body: tx(
+          'Tải deck hoặc điền form, rồi xác nhận.',
+          'Upload a deck or fill the form, then confirm.',
+        ),
+        cta: tx('Mở hồ sơ', 'Open profile'),
+        to: '/setup',
+        icon: UserRound,
+      }
+    }
+    if (isDirty) {
+      return {
+        title: tx('Lưu bản nháp hồ sơ', 'Save profile draft'),
+        body: tx(
+          'So khớp vẫn dùng bản chính thức cũ.',
+          'Matching still uses the last official version.',
+        ),
+        cta: tx('Lưu hồ sơ', 'Save profile'),
+        to: '/setup',
+        icon: Upload,
+      }
+    }
+    if (matches === 0) {
+      return {
+        title: tx('Bước 2 — So khớp đối tác', 'Step 2 — Match partners'),
+        body: tx(
+          'Chạy một lần để lấy danh sách đối tác phù hợp.',
+          'Run once to get fitting partners.',
+        ),
+        cta: tx('Chạy so khớp', 'Run matching'),
+        to: '/matches',
+        icon: Sparkles,
+        runMatch: true,
+      }
+    }
+    if (accepted === 0 && pending === 0) {
+      return {
+        title: tx('Bước 3 — Gửi lời giới thiệu', 'Step 3 — Send intro'),
+        body: tx(
+          `${matches} đối tác · ${highMatches} điểm cao.`,
+          `${matches} partners · ${highMatches} high scores.`,
+        ),
+        cta: tx('Mở so khớp', 'Open matches'),
+        to: '/matches',
+        icon: MessageSquare,
+      }
+    }
+    if (accepted === 0) {
+      return {
+        title: tx(`${pending} kết nối đang chờ`, `${pending} pending connection(s)`),
+        body: tx('Theo dõi hoặc gửi thêm intro.', 'Track or send more intros.'),
+        cta: tx('Kết nối', 'Connections'),
+        to: '/connections',
+        icon: Link2,
+      }
+    }
+    if (!sandboxCompleted) {
+      return {
+        title: tx(
+          'Bước 4 — Phòng giả lập (Module 7)',
+          'Step 4 — Sandbox sim (Module 7)',
+        ),
+        body: tx(
+          'Ra quyết định theo lượt — báo cáo năng lực founder.',
+          'Turn-based decisions — founder capability report.',
+        ),
+        cta: tx('Mở giả lập', 'Open sandbox'),
+        to: '/sandbox',
+        icon: Gamepad2,
+      }
+    }
+    if (validationOn) {
+      return {
+        title: tx(
+          'Hành trình kiểm chứng đầu tư',
+          'Investment validation journey',
+        ),
+        body: tx(
+          'So khớp NĐT → mutual → chấp nhận → pitch · mô phỏng · minh chứng (additive).',
+          'Investor match → mutual → accept → pitch · sim · proof (additive).',
+        ),
+        cta: tx('So khớp NĐT', 'Investor match'),
+        to: '/investor-matches',
+        icon: Handshake,
+      }
+    }
+    return {
+      title: tx('Bạn đang tiến tốt', "You're on track"),
+      body: tx('Xem kết nối hoặc chạy lại so khớp.', 'Review connections or re-run matching.'),
+      cta: tx('Kết nối', 'Connections'),
+      to: '/connections',
+      icon: CheckCircle2,
+    }
+  }, [
+    topCase,
+    topCaseAction,
+    hasProfile,
+    isDirty,
+    matches,
+    highMatches,
+    pending,
+    accepted,
+    sandboxCompleted,
+    validationOn,
+    lang,
+  ])
+
+  const pathSteps = [
+    {
+      n: 1,
+      label: tx('Hồ sơ', 'Profile'),
+      done: hasProfile && completion >= 40,
+      to: '/setup',
+    },
+    {
+      n: 2,
+      label: tx('So khớp', 'Match'),
+      done: matches > 0,
+      to: '/matches',
+    },
+    {
+      n: 3,
+      label: tx('Kết nối', 'Connect'),
+      done: accepted > 0,
+      to: '/connections',
+    },
+    {
+      n: 4,
+      label: tx('Giả lập', 'Sim'),
+      done: sandboxCompleted,
+      to: '/sandbox',
+    },
+    ...(validationOn
+      ? [
+          {
+            n: 5,
+            label: tx('Kiểm chứng', 'Validate'),
+            done: evalCases.some((c) => c.status === 'completed'),
+            to: activeCases.length ? '/evaluations' : '/investor-matches',
+          },
+        ]
+      : []),
+  ]
+
+  const runMatchNow = async () => {
+    if (!hasProfile) {
+      navigate('/setup')
+      return
+    }
+    setRunningMatch(true)
+    const id = toast.loading(tx('Đang so khớp…', 'Matching…'))
+    try {
+      const res = await api.post('/startup/matches/run', { confirmedProfile })
+      if (res.data?.success) {
+        toast.success(tx('Xong', 'Done'), { id })
+        navigate('/matches')
+      }
+    } catch (e) {
+      const code = e?.response?.data?.error?.code || ''
+      toast.error(
+        code === 'PROFILE_NOT_CONFIRMED'
+          ? tx('Xác nhận hồ sơ trước', 'Confirm profile first')
+          : e?.response?.data?.message || tx('Lỗi so khớp', 'Match failed'),
+        { id },
+      )
+      if (code === 'PROFILE_NOT_CONFIRMED') navigate('/setup')
+    } finally {
+      setRunningMatch(false)
+    }
+  }
 
   if (loading) {
     return (
-      <div className="space-y-6">
-        <div className="h-8 bg-slate-200 rounded w-1/4 animate-pulse"></div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-32 bg-slate-200 rounded-xl animate-pulse"></div>
-          ))}
-        </div>
-        <div className="h-64 bg-slate-200 rounded-xl animate-pulse"></div>
+      <div className="flex w-full flex-1 flex-col gap-4">
+        <div className="h-16 animate-pulse rounded-2xl bg-muted/50" />
+        <div className="h-10 animate-pulse rounded-full bg-muted/40" />
+        <div className="h-36 animate-pulse rounded-2xl bg-muted/40" />
       </div>
-    );
+    )
   }
 
-  const completionColor = (pct: number) => {
-    if (pct >= 80) return 'bg-emerald-500';
-    if (pct >= 50) return 'bg-amber-500';
-    return 'bg-rose-500';
-  };
+  const name = user?.fullName || user?.email?.split('@')[0] || 'Founder'
+  const PrimaryIcon = primary.icon
 
   return (
-    <div className="space-y-8">
-      {/* Welcome Banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-900 font-display">
-            Xin chào, {user?.fullName}!
-          </h2>
-          <p className="text-sm text-slate-500 mt-1">
-            Bảng điều khiển kết nối Deal-Flow của <strong className="text-slate-700">{confirmedProfile?.startupName || 'Startup chưa thiết lập'}</strong>
+    <div className="flex w-full min-w-0 flex-1 flex-col gap-4">
+      {/* Header — intake style compact */}
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">
+            {tx('Xin chào', 'Hi')}, {name}
           </p>
+          <h1 className="font-heading truncate text-xl font-semibold sm:text-2xl">
+            {startupName}
+          </h1>
         </div>
-
-        <RouterLink
-          to="/setup"
-          className="inline-flex items-center space-x-2 bg-emerald-600 text-white font-semibold text-sm px-4 py-2.5 rounded-lg hover:bg-emerald-700 shadow-sm transition-colors self-start md:self-center"
-        >
-          <span>Thiết lập hồ sơ</span>
-          <ArrowRight className="h-4.5 w-4.5" />
-        </RouterLink>
-      </div>
-
-      {/* Warning Unsaved Changes */}
-      {isDirty && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start space-x-3">
-          <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5 animate-bounce" />
-          <div className="text-sm text-amber-900">
-            <p className="font-bold">Bạn đang có dữ liệu thay đổi cục bộ chưa xác nhận!</p>
-            <p className="mt-0.5 leading-relaxed text-amber-800">
-              Kết quả so khớp tự động (Matching) hiện tại đang chạy dựa trên <strong>Hồ sơ chính thức đã xác nhận gần nhất trong database</strong>. Vui lòng vào trang thiết lập hồ sơ và bấm <strong>&ldquo;Đồng ý cập nhật&rdquo;</strong> để lưu dữ liệu nháp của bạn.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Metric Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-2">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Độ hoàn thiện hồ sơ</span>
-          <div className="flex items-baseline justify-between">
-            <span className="text-3xl font-bold text-slate-900 font-display">{data?.profileCompletion}%</span>
-            <span className="text-xs text-slate-500 font-medium">Chính thức</span>
-          </div>
-          <div className="w-full bg-slate-100 rounded-full h-2 mt-2">
-            <div
-              className={`h-2 rounded-full transition-all duration-500 ${completionColor(data?.profileCompletion || 0)}`}
-              style={{ width: `${data?.profileCompletion || 0}%` }}
-            ></div>
-          </div>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-2">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Tổng số đối tác phù hợp</span>
-          <div className="flex items-baseline justify-between">
-            <span className="text-3xl font-bold text-slate-900 font-display">{data?.totalMatches}</span>
-            <RouterLink to="/matches" className="text-xs text-emerald-600 font-semibold hover:underline">
-              Xem chi tiết
-            </RouterLink>
-          </div>
-          <p className="text-xs text-slate-500 font-medium mt-2">Doanh nghiệp và quỹ đầu tư hoạt động</p>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-2">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">So khớp điểm cao (≥80)</span>
-          <div className="flex items-baseline justify-between">
-            <span className="text-3xl font-bold text-slate-900 font-display text-emerald-600 font-display">
-              {data?.highMatchCount}
-            </span>
-            <Award className="h-5 w-5 text-emerald-500" />
-          </div>
-          <p className="text-xs text-slate-500 font-medium mt-2">Có độ tương thích cực kỳ tiềm năng</p>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-2">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Yêu cầu kết nối</span>
-          <div className="flex items-baseline justify-between">
-            <span className="text-3xl font-bold text-slate-900 font-display">{data?.pendingConnections}</span>
-            <span className="text-xs text-amber-600 font-semibold bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
-              Đang đợi
-            </span>
-          </div>
-          <p className="text-xs text-slate-500 font-medium mt-2">Đã chấp nhận: {data?.acceptedConnections} đối tác</p>
+        <div className="flex items-center gap-1.5">
+          <Badge variant="outline" className="tabular-nums">
+            {completion}%
+          </Badge>
+          <Badge variant="secondary" className="tabular-nums">
+            {matches} {tx('khớp', 'fit')}
+          </Badge>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="size-8 rounded-full p-0"
+            onClick={() => void load()}
+          >
+            <RefreshCw className="size-3.5" />
+          </Button>
         </div>
       </div>
 
-      {/* Two Columns Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left Col: Missing fields / Recommendations */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-6 lg:col-span-1">
-          <div>
-            <h3 className="text-base font-bold text-slate-900 font-display">Cải thiện hồ sơ</h3>
-            <p className="text-xs text-slate-500 mt-1">Bổ sung các trường sau để gia tăng độ tin cậy của thuật toán so khớp</p>
-          </div>
-
-          {data?.missingFields && data.missingFields.length > 0 ? (
-            <div className="space-y-3">
-              {data.missingFields.slice(0, 5).map((f, i) => (
-                <div key={i} className="flex items-start space-x-3 text-xs bg-slate-50 border border-slate-200 rounded-lg p-3">
-                  <HelpCircle className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-semibold text-slate-700 capitalize">{f.replace(/([A-Z])/g, ' $1')}</p>
-                    <p className="text-slate-500 mt-0.5">Nhà đầu tư thường tìm kiếm thông tin này trước tiên.</p>
-                  </div>
-                </div>
-              ))}
-              {data.missingFields.length > 5 && (
-                <p className="text-xs text-slate-400 text-center italic">Và {data.missingFields.length - 5} trường khác nữa...</p>
+      {/* Path pills */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {pathSteps.map((s, i) => (
+          <React.Fragment key={s.n}>
+            <button
+              type="button"
+              onClick={() => navigate(s.to)}
+              className={cn(
+                'inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-medium transition-colors',
+                s.done
+                  ? 'border-primary/30 bg-primary/10 text-primary'
+                  : 'border-border bg-muted/30 text-muted-foreground hover:border-primary/30',
               )}
-            </div>
-          ) : (
-            <div className="text-center py-6 space-y-2 bg-emerald-50/20 border border-emerald-100 rounded-xl">
-              <CheckCircle className="h-8 w-8 text-emerald-600 mx-auto" />
-              <p className="text-sm font-bold text-emerald-800">Tuyệt vời!</p>
-              <p className="text-xs text-emerald-600">Hồ sơ chính thức của bạn đã điền đầy đủ tất cả các thông tin cốt lõi.</p>
-            </div>
-          )}
-        </div>
+            >
+              {s.done ? (
+                <CheckCircle2 className="size-3" />
+              ) : (
+                <Circle className="size-3" />
+              )}
+              {s.n}. {s.label}
+            </button>
+            {i < pathSteps.length - 1 ? (
+              <span className="hidden text-muted-foreground/50 sm:inline">
+                →
+              </span>
+            ) : null}
+          </React.Fragment>
+        ))}
+      </div>
 
-        {/* Right Col: Recent Matches & Connections */}
-        <div className="lg:col-span-2 space-y-8">
-          {/* Matches segment */}
-          <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-bold text-slate-900 font-display">Đối tác tiềm năng nổi bật</h3>
-                <p className="text-xs text-slate-500 mt-0.5">So khớp tự động dựa trên hồ sơ chính thức gần nhất</p>
-              </div>
-              <RouterLink to="/matches" className="text-xs font-semibold text-emerald-600 hover:underline flex items-center space-x-1">
-                <span>So khớp tất cả</span>
-                <ArrowRight className="h-3 w-3" />
-              </RouterLink>
-            </div>
-
-            {data?.recentMatches && data.recentMatches.length > 0 ? (
-              <div className="space-y-3.5">
-                {data.recentMatches.map((m) => (
-                  <div key={m.id} className="flex items-center justify-between border-b border-slate-100 pb-3.5 last:border-0 last:pb-0">
-                    <div className="space-y-1">
-                      <div className="flex items-center space-x-1.5 flex-wrap">
-                        <p className="text-sm font-semibold text-slate-800">{m.partner?.organizationName || 'Đối tác doanh nghiệp'}</p>
-                        {(m.partner?.isDemo || m.partnerIsDemo || m.partner_is_demo) && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                            Dữ liệu mô phỏng
-                          </span>
-                        )}
-                      </div>
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-600 uppercase border border-slate-200">
-                        {m.partner?.organizationType.replace('_', ' ')}
-                      </span>
-                    </div>
-
-                    <div className="text-right space-y-1">
-                      <span className="inline-block text-sm font-bold text-emerald-600 font-display bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-lg">
-                        {m.totalScore} điểm
-                      </span>
-                      <p className="text-[10px] text-slate-400">Độ khớp</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200 space-y-3">
-                <Sparkles className="h-6 w-6 text-slate-400 mx-auto" />
-                <div className="text-xs text-slate-500">
-                  <p className="font-semibold">Chưa chạy so khớp</p>
-                  <p className="mt-0.5">Bấm nút bên dưới để khởi chạy phân tích matching với dữ liệu doanh nghiệp.</p>
-                </div>
-                <button
-                  onClick={() => navigate('/matches')}
-                  className="px-4 py-1.5 text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 rounded-lg shadow-sm"
+      {/* ONE primary */}
+      <div
+        className={cn(
+          'rounded-2xl border p-4 sm:p-5',
+          primary.tone === 'eval'
+            ? 'border-violet-500/35 bg-violet-500/5'
+            : 'border-primary/30 bg-primary/5',
+        )}
+      >
+        <Badge
+          className="mb-2"
+          variant={primary.tone === 'eval' ? 'secondary' : 'default'}
+        >
+          {tx('Làm ngay', 'Do now')}
+        </Badge>
+        <div className="flex items-start gap-3">
+          <span
+            className={cn(
+              'flex size-10 shrink-0 items-center justify-center rounded-xl text-white',
+              primary.tone === 'eval' ? 'bg-violet-600' : 'bg-primary',
+            )}
+          >
+            <PrimaryIcon className="size-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-heading text-base font-semibold sm:text-lg">
+              {primary.title}
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
+              {primary.body}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {primary.runMatch ? (
+                <Button
+                  size="sm"
+                  className="h-9 rounded-full"
+                  disabled={runningMatch}
+                  onClick={() => void runMatchNow()}
                 >
-                  Bắt đầu Matching
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Connections segment */}
-          <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-bold text-slate-900 font-display">Kết nối gần đây</h3>
-                <p className="text-xs text-slate-500 mt-0.5">Yêu cầu giới thiệu giới hạn từ phía của bạn</p>
-              </div>
-              <RouterLink to="/connections" className="text-xs font-semibold text-emerald-600 hover:underline flex items-center space-x-1">
-                <span>Quản lý kết nối</span>
-                <ArrowRight className="h-3 w-3" />
-              </RouterLink>
+                  {runningMatch ? (
+                    <RefreshCw className="size-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="size-3.5" />
+                  )}
+                  {primary.cta}
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  className="h-9 rounded-full"
+                  onClick={() => navigate(primary.to)}
+                >
+                  {primary.cta}
+                  <ArrowRight className="size-3.5" />
+                </Button>
+              )}
+              {!hasProfile ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-9 rounded-full"
+                  onClick={() => navigate('/setup')}
+                >
+                  <Upload className="size-3.5" />
+                  {tx('Tải deck', 'Upload deck')}
+                </Button>
+              ) : null}
             </div>
-
-            {data?.recentConnections && data.recentConnections.length > 0 ? (
-              <div className="space-y-3.5">
-                {data.recentConnections.map((c) => (
-                  <div key={c.id} className="flex items-center justify-between border-b border-slate-100 pb-3.5 last:border-0 last:pb-0">
-                    <div className="space-y-1">
-                      <div className="flex items-center space-x-1.5 flex-wrap">
-                        <p className="text-sm font-semibold text-slate-800">{c.partnerName}</p>
-                        {(c.isDemo || c.is_demo) && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                            Dữ liệu mô phỏng
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-slate-400 truncate max-w-sm">{c.message}</p>
-                    </div>
-
-                    <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                      Đang đợi
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-xs text-slate-400 italic">
-                Bạn chưa gửi yêu cầu kết nối nào. Tìm kiếm các đối tác phù hợp và nhấn "Gửi yêu cầu kết nối".
-              </div>
-            )}
           </div>
         </div>
+        {hasProfile ? (
+          <div className="mt-3 space-y-1 border-t border-border/50 pt-3">
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>{tx('Hồ sơ', 'Profile')}</span>
+              <span className="tabular-nums">{completion}%</span>
+            </div>
+            <Progress value={completion} className="h-1" />
+          </div>
+        ) : null}
+      </div>
+
+      {/* Additive §7.1 — Hành trình kiểm chứng (hidden if flag off) */}
+      {validationOn && activeCases.length > 0 ? (
+        <section className="rounded-2xl border border-violet-500/25 bg-violet-500/5 p-3.5">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-violet-800 dark:text-violet-200">
+              {tx(
+                'Hành trình kiểm chứng đầu tư',
+                'Investment validation journey',
+              )}
+            </h3>
+            <button
+              type="button"
+              className="text-[11px] font-medium text-violet-700 dark:text-violet-300"
+              onClick={() => navigate('/evaluations')}
+            >
+              {tx('Tất cả', 'All')}
+            </button>
+          </div>
+          <ul className="space-y-1.5">
+            {activeCases.slice(0, 3).map((c) => {
+              const act = caseNextAction(c, tx)
+              return (
+                <li key={c.id}>
+                  <button
+                    type="button"
+                    onClick={() => navigate(act.to)}
+                    className="flex w-full items-center gap-2 rounded-xl border border-violet-500/15 bg-background/60 px-3 py-2.5 text-left hover:bg-background"
+                  >
+                    <act.icon className="size-4 shrink-0 text-violet-600" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-semibold">
+                        {c.investor?.name || c.investorId}
+                      </p>
+                      <p className="truncate text-[10px] text-muted-foreground">
+                        {act.label}
+                      </p>
+                    </div>
+                    <ArrowRight className="size-3.5 shrink-0 text-violet-600" />
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      ) : null}
+
+      {/* Recent — 2 columns, compact */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <section className="rounded-2xl border p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-xs font-semibold">
+              {tx('Đối tác khớp', 'Matches')}
+            </h3>
+            <button
+              type="button"
+              className="text-[11px] font-medium text-primary"
+              onClick={() => navigate('/matches')}
+            >
+              {tx('Mở', 'Open')}
+            </button>
+          </div>
+          {recentMatches.length === 0 ? (
+            <p className="py-3 text-center text-[11px] text-muted-foreground">
+              {tx('Chưa có', 'None yet')}
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {recentMatches.slice(0, 3).map((m) => {
+                const p = m.partner || {}
+                return (
+                  <li key={m.id || p.id}>
+                    <button
+                      type="button"
+                      onClick={() => navigate('/matches')}
+                      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-muted/50"
+                    >
+                      <Award className="size-3.5 text-primary" />
+                      <span className="min-w-0 flex-1 truncate text-xs">
+                        {p.organizationName || p.name || '—'}
+                      </span>
+                      <span className="tabular-nums text-[11px] font-medium">
+                        {Number(m.totalScore) || 0}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </section>
+
+        <section className="rounded-2xl border p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-xs font-semibold">
+              {tx('Kết nối', 'Connections')}
+            </h3>
+            <button
+              type="button"
+              className="text-[11px] font-medium text-primary"
+              onClick={() => navigate('/connections')}
+            >
+              {tx('Mở', 'Open')}
+            </button>
+          </div>
+          {recentConnections.length === 0 ? (
+            <p className="py-3 text-center text-[11px] text-muted-foreground">
+              {tx('Chưa có', 'None yet')}
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {recentConnections.slice(0, 3).map((c) => (
+                <li key={c.id}>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/connections')}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-muted/50"
+                  >
+                    <Link2 className="size-3.5 text-primary" />
+                    <span className="min-w-0 flex-1 truncate text-xs">
+                      {c.partnerName || '—'}
+                    </span>
+                    <Badge variant="outline" className="text-[9px] capitalize">
+                      {String(c.status || '').toLowerCase() === 'accepted'
+                        ? 'OK'
+                        : tx('Chờ', 'Wait')}
+                    </Badge>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </div>
     </div>
-  );
+  )
 }

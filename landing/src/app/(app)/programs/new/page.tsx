@@ -1,5 +1,6 @@
 'use client'
 
+import { useTx } from '@/lib/tx'
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -25,6 +26,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Field, FieldGroup, FieldLabel, FieldDescription } from '@/components/ui/field'
 import { Spinner } from '@/components/ui/spinner'
+import { RubricEditor } from '@/components/dashboard/RubricEditor'
 
 function parseList(value: string): string[] {
   return value
@@ -34,6 +36,7 @@ function parseList(value: string): string[] {
 }
 
 export default function NewProgramPage() {
+  const { tx } = useTx()
   const { session } = useAuth()
   const router = useRouter()
   const [error, setError] = useState<string | null>(null)
@@ -60,7 +63,7 @@ export default function NewProgramPage() {
     e.preventDefault()
     if (!session) return
     if (Math.round(weightTotal) !== 100) {
-      setError(`Rubric phải = 100 (hiện ${weightTotal})`)
+      setError(tx(`Rubric phải = 100 (hiện ${weightTotal})`, `Rubric weights must total 100 (currently ${weightTotal})`))
       return
     }
     setSaving(true)
@@ -86,27 +89,27 @@ export default function NewProgramPage() {
         status,
         rubric: { version: 'startup-screening-v1', criteria },
       })
-      toast.success('Đã tạo chương trình')
+      toast.success(tx('Đã tạo chương trình', 'Program created'))
       router.push(`/programs/${program.id}/overview`)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Lỗi')
+      setError(err instanceof Error ? err.message : tx('Lỗi', 'Error'))
     } finally {
       setSaving(false)
     }
   }
 
   if (session?.role === 'reviewer') {
-    return <ErrorAlert title="Không có quyền" message="Reviewer không tạo được chương trình." />
+    return <ErrorAlert title={tx('Không có quyền', 'No permission')} message={tx('Reviewer không tạo được chương trình.', 'Reviewers cannot create programs.')} />
   }
 
   return (
     <PageShell>
       <PageHeader
-        title="Tạo chương trình"
-        description="Định nghĩa pipeline intake: mục tiêu, filter cứng, rubric chấm điểm."
+        title={tx('Tạo chương trình')}
+        description={tx('Định nghĩa pipeline intake: mục tiêu, filter cứng, rubric chấm điểm.', 'Define the intake pipeline: objective, hard filters, scoring rubric.')}
         breadcrumb={
           <Link href="/programs" className="hover:text-foreground">
-            ← Danh sách chương trình
+            ← {tx('Danh sách chương trình', 'All programs')}
           </Link>
         }
         meta={
@@ -117,7 +120,7 @@ export default function NewProgramPage() {
         actions={
           <Button size="sm" type="submit" form="new-prog" disabled={saving}>
             {saving ? <Spinner data-icon="inline-start" /> : null}
-            Tạo chương trình
+            {tx('Tạo chương trình')}
           </Button>
         }
       />
@@ -125,41 +128,41 @@ export default function NewProgramPage() {
 
       <form id="new-prog" onSubmit={onSubmit}>
         <SplitGrid>
-          <Section title="Thông tin cơ bản" description="Tên, mục tiêu, trạng thái">
+          <Section title={tx('Thông tin cơ bản', 'Basics')} description={tx('Tên, mục tiêu, trạng thái', 'Name, objective, status')}>
             <FieldGroup className="gap-3">
               <Field>
-                <FieldLabel>Tên chương trình *</FieldLabel>
+                <FieldLabel>{tx('Tên chương trình *', 'Program name *')}</FieldLabel>
                 <Input required minLength={2} value={name} onChange={(e) => setName(e.target.value)} placeholder="AgriTech Seed 2026" />
               </Field>
               <Field>
-                <FieldLabel>Mục tiêu *</FieldLabel>
+                <FieldLabel>{tx('Mục tiêu *', 'Objective *')}</FieldLabel>
                 <Textarea
                   className="min-h-20"
                   required
                   minLength={2}
                   value={objective}
                   onChange={(e) => setObjective(e.target.value)}
-                  placeholder="Tìm 10 startup climate/agri giai A cho cohort…"
+                  placeholder={tx('Tìm 10 startup climate/agri giai A cho cohort…', 'Find 10 climate/agri Series-A startups for the cohort…')}
                 />
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field>
-                  <FieldLabel>Trạng thái</FieldLabel>
+                  <FieldLabel>{tx('Trạng thái', 'Status')}</FieldLabel>
                   <Select value={status} onValueChange={(v) => v && setStatus(v as ProgramStatus)}>
                     <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectGroup>
-                        <SelectItem value="DRAFT">Nháp</SelectItem>
-                        <SelectItem value="OPEN">Mở</SelectItem>
-                        <SelectItem value="CLOSED">Đóng</SelectItem>
+                        <SelectItem value="DRAFT">{tx('Nháp', 'Draft')}</SelectItem>
+                        <SelectItem value="OPEN">{tx('Mở', 'Open')}</SelectItem>
+                        <SelectItem value="CLOSED">{tx('Đóng', 'Closed')}</SelectItem>
                       </SelectGroup>
                     </SelectContent>
                   </Select>
                 </Field>
                 <Field>
-                  <FieldLabel>Chỉ tiêu chọn</FieldLabel>
+                  <FieldLabel>{tx('Chỉ tiêu chọn', 'Selection quota')}</FieldLabel>
                   <Input
                     type="number"
                     min={1}
@@ -169,16 +172,16 @@ export default function NewProgramPage() {
                 </Field>
               </div>
               <Field>
-                <FieldLabel>Ngành ưu tiên</FieldLabel>
+                <FieldLabel>{tx('Ngành ưu tiên', 'Priority sectors')}</FieldLabel>
                 <Input value={industries} onChange={(e) => setIndustries(e.target.value)} />
-                <FieldDescription>Phân tách bằng dấu phẩy</FieldDescription>
+                <FieldDescription>{tx('Phân tách bằng dấu phẩy', 'Comma-separated')}</FieldDescription>
               </Field>
               <Field>
-                <FieldLabel>Giai đoạn nhận</FieldLabel>
+                <FieldLabel>{tx('Giai đoạn nhận', 'Accepted stages')}</FieldLabel>
                 <Input value={stages} onChange={(e) => setStages(e.target.value)} />
               </Field>
               <Field>
-                <FieldLabel>Địa bàn</FieldLabel>
+                <FieldLabel>{tx('Địa bàn', 'Regions')}</FieldLabel>
                 <Input value={locations} onChange={(e) => setLocations(e.target.value)} />
               </Field>
               <Field>
@@ -186,7 +189,7 @@ export default function NewProgramPage() {
                 <Input value={requiredFields} onChange={(e) => setRequiredFields(e.target.value)} />
               </Field>
               <Field>
-                <FieldLabel>Mô tả</FieldLabel>
+                <FieldLabel>{tx('Mô tả', 'Description')}</FieldLabel>
                 <Textarea
                   className="min-h-16"
                   value={description}
@@ -197,44 +200,15 @@ export default function NewProgramPage() {
           </Section>
 
           <Section
-            title="Rubric chấm điểm"
-            description="Tổng trọng số phải = 100"
+            title={tx('Rubric chấm điểm', 'Scoring rubric')}
+            description={tx('Thêm chỉ tiêu · tổng trọng số = 100', 'Add criteria · weights total 100')}
             action={
               <Badge variant={Math.round(weightTotal) === 100 ? 'default' : 'destructive'}>
                 {weightTotal}
               </Badge>
             }
           >
-            <div className="flex flex-col gap-2">
-              {Object.entries(criteria).map(([key, c]) => (
-                <div
-                  key={key}
-                  className="grid grid-cols-[1fr_5rem] items-center gap-2 rounded-lg border bg-muted/20 p-2"
-                >
-                  <Input
-                    className="h-8"
-                    value={c.name}
-                    onChange={(e) =>
-                      setCriteria((prev) => ({
-                        ...prev,
-                        [key]: { ...prev[key], name: e.target.value },
-                      }))
-                    }
-                  />
-                  <Input
-                    className="h-8"
-                    type="number"
-                    value={c.weight}
-                    onChange={(e) =>
-                      setCriteria((prev) => ({
-                        ...prev,
-                        [key]: { ...prev[key], weight: Number(e.target.value) },
-                      }))
-                    }
-                  />
-                </div>
-              ))}
-            </div>
+            <RubricEditor criteria={criteria} onChange={setCriteria} />
           </Section>
         </SplitGrid>
       </form>

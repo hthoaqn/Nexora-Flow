@@ -1,28 +1,48 @@
 // @ts-nocheck
 /**
- * @license
- * SPDX-License-Identifier: Apache-2.0
+ * Diff approval table — shadcn Table + Checkbox. Fully bilingual (VI/EN).
  */
-
-import React, { useEffect, useState } from 'react';
-import { StartupProfileDTO } from '../../types';
-import { Check, AlertTriangle } from 'lucide-react';
+import React, { useEffect, useState } from 'react'
+import { StartupProfileDTO } from '../../types'
+import { Check, AlertTriangle } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { cn } from '@/lib/utils'
+import { usePortalI18n } from '../i18n'
 
 interface CompareChangesProps {
-  currentProfile: StartupProfileDTO | null;
-  draftProfile: StartupProfileDTO;
-  selectedFields: string[];
-  onChangeSelection: (fields: string[]) => void;
-  onConfirm: () => void;
-  onCancel: () => void;
-  isSaving: boolean;
+  currentProfile: StartupProfileDTO | null
+  draftProfile: StartupProfileDTO
+  selectedFields: string[]
+  onChangeSelection: (fields: string[]) => void
+  onConfirm: () => void
+  onCancel: () => void
+  isSaving: boolean
 }
 
 interface DifferenceItem {
-  field: string;
-  label: string;
-  currentValue: string;
-  proposedValue: string;
+  field: string
+  label: string
+  currentValue: string
+  proposedValue: string
 }
 
 export const FIELD_LABELS: Record<string, string> = {
@@ -47,7 +67,36 @@ export const FIELD_LABELS: Record<string, string> = {
   targetCustomers: 'Khách hàng mục tiêu',
   partnershipNeeds: 'Hình thức hợp tác cần tìm',
   teamCapabilities: 'Năng lực cốt lõi của đội ngũ',
-};
+}
+
+export const FIELD_LABELS_EN: Record<string, string> = {
+  startupName: 'Startup name',
+  website: 'Website',
+  contactEmail: 'Contact email',
+  phoneNumber: 'Phone number',
+  foundingYear: 'Founding year',
+  address: 'Address',
+  country: 'Country',
+  stage: 'Development stage',
+  businessModel: 'Business model',
+  description: 'Short description',
+  problemStatement: 'Problem statement',
+  solutionDescription: 'Solution',
+  productDescription: 'Product description',
+  fundingNeed: 'Funding need',
+  currency: 'Currency',
+  industries: 'Industries',
+  technologies: 'Core technologies',
+  markets: 'Markets',
+  targetCustomers: 'Target customers',
+  partnershipNeeds: 'Partnership needs',
+  teamCapabilities: 'Team capabilities',
+}
+
+export function fieldLabel(key: string, lang: string): string {
+  const map = lang === 'vi' ? FIELD_LABELS : FIELD_LABELS_EN
+  return map[key] || FIELD_LABELS[key] || key
+}
 
 export default function CompareChanges({
   currentProfile,
@@ -58,164 +107,191 @@ export default function CompareChanges({
   onCancel,
   isSaving,
 }: CompareChangesProps) {
-  const [differences, setDifferences] = useState<DifferenceItem[]>([]);
+  const { lang } = usePortalI18n()
+  const tx = (vi: string, en: string) => (lang === 'vi' ? vi : en)
+  const [differences, setDifferences] = useState<DifferenceItem[]>([])
 
   useEffect(() => {
-    const list: DifferenceItem[] = [];
+    const list: DifferenceItem[] = []
+    const emptyLabel = tx('Chưa cung cấp', 'Not provided')
 
     Object.keys(FIELD_LABELS).forEach((key) => {
-      const currentVal = currentProfile ? currentProfile[key as keyof StartupProfileDTO] : undefined;
-      const draftVal = draftProfile[key as keyof StartupProfileDTO];
+      const currentVal = currentProfile
+        ? currentProfile[key as keyof StartupProfileDTO]
+        : undefined
+      const draftVal = draftProfile[key as keyof StartupProfileDTO]
 
-      // Format arrays/primitives for visual reading
       const formatVal = (v: any) => {
-        if (v === undefined || v === null || v === '') return 'Chưa cung cấp';
-        if (Array.isArray(v)) return v.length > 0 ? v.join(', ') : 'Chưa cung cấp';
-        if (key === 'fundingNeed') return `${Number(v).toLocaleString()} ${draftProfile.currency}`;
-        return String(v);
-      };
+        if (v === undefined || v === null || v === '') return emptyLabel
+        if (Array.isArray(v)) return v.length > 0 ? v.join(', ') : emptyLabel
+        if (key === 'fundingNeed')
+          return `${Number(v).toLocaleString()} ${draftProfile.currency}`
+        return String(v)
+      }
 
-      const currStr = formatVal(currentVal);
-      const draftStr = formatVal(draftVal);
+      const currStr = formatVal(currentVal)
+      const draftStr = formatVal(draftVal)
 
       if (currStr !== draftStr) {
         list.push({
           field: key,
-          label: FIELD_LABELS[key],
+          label: fieldLabel(key, lang),
           currentValue: currStr,
           proposedValue: draftStr,
-        });
+        })
       }
-    });
+    })
 
-    setDifferences(list);
+    setDifferences(list)
 
-    // Default select all changed fields on first load if none selected
     if (selectedFields.length === 0 && list.length > 0) {
-      onChangeSelection(list.map((d) => d.field));
+      onChangeSelection(list.map((d) => d.field))
     }
-  }, [currentProfile, draftProfile]);
+  }, [currentProfile, draftProfile, lang])
 
   const handleToggleField = (field: string) => {
     if (selectedFields.includes(field)) {
-      onChangeSelection(selectedFields.filter((f) => f !== field));
+      onChangeSelection(selectedFields.filter((f) => f !== field))
     } else {
-      onChangeSelection([...selectedFields, field]);
+      onChangeSelection([...selectedFields, field])
     }
-  };
-
-  const handleSelectAll = () => {
-    onChangeSelection(differences.map((d) => d.field));
-  };
-
-  const handleDeselectAll = () => {
-    onChangeSelection([]);
-  };
+  }
 
   if (differences.length === 0) {
     return (
-      <div className="bg-slate-50 rounded-xl p-8 border border-slate-200 text-center space-y-4">
-        <div className="h-12 w-12 rounded-full bg-slate-100 flex items-center justify-center mx-auto text-slate-500">
-          <Check className="h-6 w-6" />
-        </div>
-        <div>
-          <h4 className="font-bold text-slate-900">Không có sự thay đổi dữ liệu</h4>
-          <p className="text-sm text-slate-500 mt-1">Dữ liệu hồ sơ nháp hiện tại hoàn toàn trùng khớp với hồ sơ chính thức trong cơ sở dữ liệu.</p>
-        </div>
-        <div className="flex justify-center space-x-3">
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 text-sm font-semibold bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50"
-          >
-            Quay lại
-          </button>
-        </div>
-      </div>
-    );
+      <Card className="shadow-none">
+        <CardContent className="flex flex-col items-center gap-4 py-12 text-center">
+          <span className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+            <Check className="size-6" />
+          </span>
+          <div>
+            <h4 className="font-heading font-semibold">
+              {tx('Không có thay đổi', 'No changes')}
+            </h4>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {tx('Draft trùng khớp hồ sơ chính thức.', 'The draft matches the official profile.')}
+            </p>
+          </div>
+          <Button variant="outline" onClick={onCancel}>
+            {tx('Quay lại', 'Back')}
+          </Button>
+        </CardContent>
+      </Card>
+    )
   }
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm space-y-6 p-6">
-      <div className="border-b border-slate-100 pb-4">
-        <h3 className="text-lg font-bold text-slate-900 font-display">So sánh và phê duyệt thay đổi</h3>
-        <p className="text-sm text-slate-500 mt-1">
-          Hệ thống phát hiện {differences.length} trường có sự khác biệt. Chọn các trường bạn muốn ghi nhận vào hồ sơ chính thức để cập nhật cơ sở dữ liệu.
-        </p>
-      </div>
-
-      {/* Select All Actions */}
-      <div className="flex items-center justify-between bg-slate-50 px-4 py-2.5 rounded-lg border border-slate-200 text-sm">
-        <span className="font-medium text-slate-600">Đã chọn: {selectedFields.length} / {differences.length} trường thay đổi</span>
-        <div className="space-x-4">
-          <button onClick={handleSelectAll} className="text-emerald-600 font-semibold hover:text-emerald-700 hover:underline">Chọn tất cả</button>
-          <button onClick={handleDeselectAll} className="text-slate-500 font-semibold hover:text-slate-600 hover:underline">Bỏ chọn tất cả</button>
+    <Card className="gap-0 overflow-hidden py-0 shadow-none">
+      <CardHeader className="border-b py-4!">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle>{tx('So sánh & phê duyệt', 'Compare & approve')}</CardTitle>
+            <CardDescription className="mt-1">
+              {differences.length}{' '}
+              {tx(
+                'trường khác biệt — chọn trường ghi vào hồ sơ chính thức.',
+                'fields differ — pick which ones to write to the official profile.',
+              )}
+            </CardDescription>
+          </div>
+          <Badge variant="secondary" className="tabular-nums">
+            {selectedFields.length}/{differences.length} {tx('chọn', 'selected')}
+          </Badge>
         </div>
-      </div>
+        <div className="flex gap-2 pt-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="rounded-lg"
+            onClick={() => onChangeSelection(differences.map((d) => d.field))}
+          >
+            {tx('Chọn tất cả', 'Select all')}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="rounded-lg"
+            onClick={() => onChangeSelection([])}
+          >
+            {tx('Bỏ chọn', 'Clear')}
+          </Button>
+        </div>
+      </CardHeader>
 
-      {/* Comparisons List */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="border-b border-slate-200 text-xs text-slate-500 uppercase font-bold bg-slate-50/50">
-              <th className="py-3 px-4 w-12">Áp dụng</th>
-              <th className="py-3 px-4 w-40">Tên trường</th>
-              <th className="py-3 px-4">Dữ liệu hiện tại (Confirmed)</th>
-              <th className="py-3 px-4 bg-emerald-50/30 text-emerald-900">Đề xuất mới (Draft)</th>
-            </tr>
-          </thead>
-          <tbody>
+      <CardContent className="p-0">
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="w-12 pl-4">{tx('Áp dụng', 'Apply')}</TableHead>
+              <TableHead className="w-40">{tx('Trường', 'Field')}</TableHead>
+              <TableHead>{tx('Hiện tại', 'Current')}</TableHead>
+              <TableHead className="bg-primary/5 text-primary">
+                {tx('Đề xuất (draft)', 'Proposed (draft)')}
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {differences.map((item) => {
-              const isChecked = selectedFields.includes(item.field);
+              const checked = selectedFields.includes(item.field)
               return (
-                <tr
+                <TableRow
                   key={item.field}
+                  data-state={checked ? 'selected' : undefined}
+                  className="cursor-pointer"
                   onClick={() => handleToggleField(item.field)}
-                  className={`border-b border-slate-100 text-sm hover:bg-slate-50/50 cursor-pointer transition-colors ${
-                    isChecked ? 'bg-emerald-50/5' : ''
-                  }`}
                 >
-                  <td className="py-4 px-4 text-center">
-                    <input
-                      type="checkbox"
-                      checked={isChecked}
-                      onChange={() => {}} // click on row handles toggle
-                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4 cursor-pointer"
+                  <TableCell className="pl-4" onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={() => handleToggleField(item.field)}
+                      aria-label={`${tx('Chọn', 'Select')} ${item.label}`}
                     />
-                  </td>
-                  <td className="py-4 px-4 font-bold text-slate-700">{item.label}</td>
-                  <td className="py-4 px-4 text-slate-500 line-through truncate max-w-xs">{item.currentValue}</td>
-                  <td className="py-4 px-4 font-medium text-slate-900 bg-emerald-50/10 max-w-xs">
+                  </TableCell>
+                  <TableCell className="font-medium whitespace-normal">
+                    {item.label}
+                  </TableCell>
+                  <TableCell className="max-w-[200px] whitespace-normal text-muted-foreground line-through">
+                    {item.currentValue}
+                  </TableCell>
+                  <TableCell
+                    className={cn(
+                      'max-w-[220px] whitespace-normal font-medium',
+                      checked && 'bg-primary/5',
+                    )}
+                  >
                     {item.proposedValue}
-                  </td>
-                </tr>
-              );
+                  </TableCell>
+                </TableRow>
+              )
             })}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </CardContent>
 
-      <div className="bg-amber-50 rounded-lg p-4 border border-amber-200 text-xs text-amber-800 flex items-start space-x-3">
-        <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-        <p className="leading-normal">
-          <strong>Lưu ý quan trọng:</strong> Khi bạn bấm nút xác nhận, các trường được tích sẽ trực tiếp ghi đè lên dữ liệu hồ sơ chính thức trong Supabase, tạo ra một phiên bản khôi phục mới trong lịch sử phiên bản. Các trường không tích sẽ giữ nguyên giá trị cũ.
-        </p>
-      </div>
-
-      <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100">
-        <button
-          onClick={onCancel}
-          className="px-5 py-2.5 text-sm font-semibold bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50"
-        >
-          Hủy bỏ nháp
-        </button>
-        <button
-          onClick={onConfirm}
-          disabled={selectedFields.length === 0 || isSaving}
-          className="px-5 py-2.5 text-sm font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 shadow-sm transition-colors flex items-center space-x-2"
-        >
-          {isSaving ? 'Đang lưu trữ...' : 'Đồng ý cập nhật các trường đã chọn'}
-        </button>
-      </div>
-    </div>
-  );
+      <CardFooter className="flex-col items-stretch gap-3 border-t py-4 sm:flex-row sm:items-center sm:justify-between">
+        <Alert className="border-amber-500/30 bg-amber-500/10 py-2 sm:max-w-md">
+          <AlertTriangle className="size-4 text-amber-600" />
+          <AlertDescription className="text-xs text-amber-900 dark:text-amber-200">
+            {tx(
+              'Chỉ các trường đã chọn được ghi đè hồ sơ confirmed. Trường bỏ chọn giữ nguyên.',
+              'Only selected fields overwrite the confirmed profile. Unselected fields stay unchanged.',
+            )}
+          </AlertDescription>
+        </Alert>
+        <div className="flex shrink-0 justify-end gap-2">
+          <Button variant="outline" onClick={onCancel} disabled={isSaving}>
+            {tx('Hủy', 'Cancel')}
+          </Button>
+          <Button
+            onClick={onConfirm}
+            disabled={isSaving || selectedFields.length === 0}
+          >
+            {isSaving
+              ? tx('Đang lưu…', 'Saving…')
+              : tx('Xác nhận & lưu hồ sơ', 'Confirm & save profile')}
+          </Button>
+        </div>
+      </CardFooter>
+    </Card>
+  )
 }

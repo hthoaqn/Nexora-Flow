@@ -1,0 +1,29 @@
+# Nexora Flow — https://nexora-flow.cloud
+# Prefer /robots.ts (Next MetadataRoute). This static file is a fallback.
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /admin
+Disallow: /pending
+Disallow: /auth/
+Disallow: /intake-api/
+Disallow: /dashboard
+Disallow: /setup
+Disallow: /matches
+Disallow: /connections
+Disallow: /partners
+Disallow: /sandbox
+Disallow: /investor-matches
+Disallow: /evaluations
+Disallow: /programs
+Disallow: /applications
+Disallow: /settings
+Disallow: /onboarding
+Disallow: /matching
+Disallow: /workspace/
+Disallow: /my-application/
+Disallow: /startup/
+
+Sitemap: https://nexora-flow.cloud/sitemap.xml
+Host: https://nexora-flow.cloud

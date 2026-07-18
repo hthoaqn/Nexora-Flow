@@ -10,56 +10,156 @@ import { Toaster } from 'sonner'
 import { useAuthStore } from './store/useAuthStore'
 import { api } from './api'
 
-import Login from './pages/Login'
-import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import SetupProfile from './pages/SetupProfile'
 import Matches from './pages/Matches'
 import Connections from './pages/Connections'
 import Partners from './pages/Partners'
 import Sandbox from './pages/Sandbox'
+import InvestorMatches from './pages/InvestorMatches'
+import Evaluations from './pages/Evaluations'
+import EvaluationCasePage from './pages/EvaluationCase'
+import PitchRoom from './pages/PitchRoom'
+import SimulationRound from './pages/SimulationRound'
+import ProofRound from './pages/ProofRound'
+import NotificationsPage from './pages/Notifications'
 import Layout from './components/Layout'
+import { isInvestorPipelineEnabled } from '@/investor/flags'
+
+function LoginRedirect() {
+  useEffect(() => {
+    window.location.replace('/login?tab=startup')
+  }, [])
+  return (
+    <div className="flex h-svh items-center justify-center">
+      <div className="size-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+    </div>
+  )
+}
+
+function RegisterRedirect() {
+  useEffect(() => {
+    window.location.replace('/register')
+  }, [])
+  return (
+    <div className="flex h-svh items-center justify-center">
+      <div className="size-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+    </div>
+  )
+}
+
+function BootScreen({ label }: { label: string }) {
+  return (
+    <div className="flex h-svh w-full flex-col items-center justify-center gap-3 bg-background">
+      <div className="size-9 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      <p className="text-sm text-muted-foreground">{label}</p>
+    </div>
+  )
+}
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.accessToken)
+  const hydrated = useAuthStore((s) => s._hasHydrated)
+  if (!hydrated) {
+    return (
+      <BootScreen
+        label={
+          typeof window !== 'undefined' &&
+          window.localStorage.getItem('nf-lang') === 'en'
+            ? 'Restoring session…'
+            : 'Đang khôi phục phiên…'
+        }
+      />
+    )
+  }
   if (!token) return <Navigate to="/login" replace />
   return <Layout>{children}</Layout>
 }
 
 function PublicOnlyRoute({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.accessToken)
+  const hydrated = useAuthStore((s) => s._hasHydrated)
+  if (!hydrated) return <BootScreen label="…" />
   if (token) return <Navigate to="/dashboard" replace />
   return <>{children}</>
 }
 
 export default function PortalApp() {
-  const { accessToken, setAuth, clearAuth } = useAuthStore()
+  const accessToken = useAuthStore((s) => s.accessToken)
+  const setAuth = useAuthStore((s) => s.setAuth)
+  const clearAuth = useAuthStore((s) => s.clearAuth)
+  const hydrated = useAuthStore((s) => s._hasHydrated)
+  const setHasHydrated = useAuthStore((s) => s.setHasHydrated)
   const [checking, setChecking] = useState(true)
 
+  // Fallback if onRehydrateStorage did not fire (SSR edge)
   useEffect(() => {
+    if (hydrated) return
+    const t = window.setTimeout(() => {
+      if (!useAuthStore.getState()._hasHydrated) {
+        setHasHydrated(true)
+      }
+    }, 80)
+    return () => clearTimeout(t)
+  }, [hydrated, setHasHydrated])
+
+  useEffect(() => {
+    if (!hydrated) return
+
     const checkSession = async () => {
-      if (accessToken) {
-        try {
-          const res = await api.get('/auth/me')
-          if (res.data?.success) {
-            const { user } = res.data.data
-            setAuth(user, accessToken, useAuthStore.getState().refreshToken || '')
+      const token = useAuthStore.getState().accessToken
+      if (!token) {
+        setChecking(false)
+        return
+      }
+      try {
+        const res = await api.get('/auth/me')
+        if (res.data?.success) {
+          const payload = res.data.data
+          const user = payload?.user ?? payload
+          if (user?.id) {
+            const st = String(user.status || 'active').toLowerCase()
+            if (st === 'pending' || st === 'rejected') {
+              clearAuth()
+              window.location.replace('/pending')
+              return
+            }
+            setAuth(
+              user,
+              token,
+              useAuthStore.getState().refreshToken || '',
+            )
           }
-        } catch {
+        }
+      } catch (e: any) {
+        const status = e?.response?.status
+        const code =
+          e?.response?.data?.error?.code || e?.response?.data?.detail?.code
+        if (code === 'ACCOUNT_PENDING' || code === 'PENDING_APPROVAL') {
+          clearAuth()
+          window.location.replace('/pending')
+          return
+        }
+        // Only log out on real auth failure — not network blips
+        if (status === 401 || status === 403) {
           clearAuth()
         }
       }
       setChecking(false)
     }
     void checkSession()
-  }, [accessToken, setAuth, clearAuth])
+  }, [hydrated, accessToken, setAuth, clearAuth])
 
-  if (checking) {
+  if (!hydrated || checking) {
     return (
-      <div className="flex h-svh w-full flex-col items-center justify-center gap-3 bg-background">
-        <div className="size-9 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-        <p className="text-sm text-muted-foreground">Đang mở Startup Portal…</p>
-      </div>
+      <BootScreen
+        label={
+          typeof window !== 'undefined' &&
+          window.localStorage.getItem('nf-lang') === 'en'
+            ? 'Opening Startup Portal…'
+            : 'Đang mở Startup Portal…'
+        }
+      />
     )
   }
 
@@ -71,7 +171,7 @@ export default function PortalApp() {
           path="/login"
           element={
             <PublicOnlyRoute>
-              <Login />
+              <LoginRedirect />
             </PublicOnlyRoute>
           }
         />
@@ -79,7 +179,7 @@ export default function PortalApp() {
           path="/register"
           element={
             <PublicOnlyRoute>
-              <Register />
+              <RegisterRedirect />
             </PublicOnlyRoute>
           }
         />
@@ -91,7 +191,6 @@ export default function PortalApp() {
             </ProtectedRoute>
           }
         />
-        {/* Legacy: / was dashboard in original portal */}
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route
           path="/setup"
@@ -141,6 +240,66 @@ export default function PortalApp() {
             </ProtectedRoute>
           }
         />
+        {isInvestorPipelineEnabled() ? (
+          <>
+            <Route
+              path="/investor-matches"
+              element={
+                <ProtectedRoute>
+                  <InvestorMatches />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/evaluations"
+              element={
+                <ProtectedRoute>
+                  <Evaluations />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/evaluations/:caseId"
+              element={
+                <ProtectedRoute>
+                  <EvaluationCasePage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/evaluations/:caseId/pitch"
+              element={
+                <ProtectedRoute>
+                  <PitchRoom />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/evaluations/:caseId/simulation"
+              element={
+                <ProtectedRoute>
+                  <SimulationRound />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/evaluations/:caseId/proof"
+              element={
+                <ProtectedRoute>
+                  <ProofRound />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/notifications"
+              element={
+                <ProtectedRoute>
+                  <NotificationsPage />
+                </ProtectedRoute>
+              }
+            />
+          </>
+        ) : null}
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </BrowserRouter>

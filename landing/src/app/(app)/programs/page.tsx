@@ -1,41 +1,59 @@
 'use client'
 
+/**
+ * Intake home — kept short: (1) search existing programs (2) pick the best one to work on.
+ */
+
+import { useTx } from '@/lib/tx'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
   ArrowRightIcon,
   FolderKanbanIcon,
+  GitCompareArrowsIcon,
   PlusIcon,
   RefreshCwIcon,
   SearchIcon,
   SparklesIcon,
+  StarIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/lib/auth/session'
-import { listPrograms, getOrganizationMe, upsertOrganization } from '@/lib/api/client'
+import { useIntakeMode } from '@/lib/intake-mode'
+import {
+  listPrograms,
+  getOrganizationMe,
+  upsertOrganization,
+} from '@/lib/api/client'
 import type { Program } from '@/lib/api/types'
 import { PageHeader } from '@/components/dashboard/PageHeader'
 import { EmptyState } from '@/components/dashboard/EmptyState'
 import { ErrorAlert } from '@/components/dashboard/ErrorAlert'
 import { PageSkeleton } from '@/components/dashboard/LoadingBlock'
 import { StatusBadge } from '@/components/dashboard/StatusBadge'
-import { StatCard, StatGrid } from '@/components/dashboard/StatCard'
-import { DataPanel, PageShell, Toolbar } from '@/components/dashboard/Section'
+import { PageShell, Section } from '@/components/dashboard/Section'
+import { AiDisclosure } from '@/components/dashboard/AiDisclosure'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
+
+function programRankScore(p: Program): number {
+  // Prefer OPEN, higher quota, more sectors defined
+  let s = 0
+  if (p.status === 'OPEN') s += 100
+  else if (p.status === 'DRAFT') s += 40
+  else if (p.status === 'CLOSED') s += 10
+  s += Math.min(50, Number(p.expectedSelections || 0) * 2)
+  s += Math.min(30, (p.priorityIndustries || []).length * 5)
+  s += Math.min(20, (p.acceptedStages || []).length * 4)
+  return s
+}
 
 export default function ProgramsPage() {
+  const { tx } = useTx()
   const { session } = useAuth()
+  const { mode } = useIntakeMode()
   const [items, setItems] = useState<Program[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -47,8 +65,6 @@ export default function ProgramsPage() {
     setLoading(true)
     setError(null)
     try {
-      // Org title must be workspace name — never a person's displayName
-      // (old bug: first Google login wrote "Viet Hoang Nguyen" as org name → all testers saw it)
       const fallbackOrgTitle =
         session.organizationId === 'nexora-flow'
           ? 'Nexora Flow'
@@ -62,7 +78,6 @@ export default function ProgramsPage() {
       try {
         const me = await getOrganizationMe(session)
         const raw = (me.name || '').trim()
-        // Heuristic: if org name looks like a personal full name, prefer workspace label
         const looksPersonal =
           raw.length > 0 &&
           raw.split(/\s+/).length >= 2 &&
@@ -71,7 +86,6 @@ export default function ProgramsPage() {
           setOrgName(raw)
         } else {
           setOrgName(fallbackOrgTitle)
-          // Best-effort rename polluted org once (owner/admin only)
           if (
             looksPersonal &&
             (session.role === 'owner' || session.role === 'admin')
@@ -83,30 +97,27 @@ export default function ProgramsPage() {
                 description: me.description || '',
               })
             } catch {
-              /* ignore rename failures */
+              /* ignore */
             }
           }
         }
       } catch {
         setOrgName(fallbackOrgTitle)
-        if (session.role === 'owner' || session.role === 'admin') {
-          try {
-            await upsertOrganization(session, { name: fallbackOrgTitle })
-          } catch {
-            /* optional */
-          }
-        }
       }
+
       const page = await listPrograms(session, { limit: 50 })
       setItems(page.items || [])
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Không tải được chương trình'
+      const msg =
+        e instanceof Error
+          ? e.message
+          : tx('Không tải được chương trình', 'Could not load programs')
       setError(msg)
       toast.error(msg)
     } finally {
       setLoading(false)
     }
-  }, [session])
+  }, [session, tx])
 
   useEffect(() => {
     void load()
@@ -123,199 +134,313 @@ export default function ProgramsPage() {
     )
   }, [items, q])
 
-  const openCount = items.filter((p) => p.status === 'OPEN').length
-  const draftCount = items.filter((p) => p.status === 'DRAFT').length
-  const totalSelections = items.reduce((s, p) => s + (p.expectedSelections || 0), 0)
+  /** Best programs to continue work on (not the search list) */
+  const recommended = useMemo(() => {
+    return [...items]
+      .sort((a, b) => programRankScore(b) - programRankScore(a))
+      .slice(0, 3)
+  }, [items])
 
   if (loading) return <PageSkeleton />
 
   return (
     <PageShell>
       <PageHeader
-        title={orgName || 'Chương trình'}
-        description="Pipeline deal-flow: nhận hồ sơ, chấm điểm, ranking và shortlist."
+        title={
+          mode === 'search'
+            ? tx('Chọn chương trình để tìm hồ sơ', 'Pick a program to find apps')
+            : orgName || tx('Chọn lọc dự án', 'Shortlist projects')
+        }
+        description={
+          mode === 'search'
+            ? tx(
+                'Chế độ tìm hồ sơ: chọn chương trình rồi chạy so khớp thesis với hồ sơ đã nộp.',
+                'Find-apps mode: pick a program, then match its thesis against submitted apps.',
+              )
+            : tx(
+                'Chế độ chọn lọc: chọn chương trình → nhận hồ sơ → xếp hạng → rút gọn dự án tốt nhất.',
+                'Shortlist mode: pick a program → receive apps → rank → export the best projects.',
+              )
+        }
         meta={
           <>
-            <Badge variant="secondary">{items.length} chương trình</Badge>
-            <Badge variant="outline">{openCount} đang mở</Badge>
+            <Badge variant="secondary">
+              {items.length} {tx('chương trình', 'programs')}
+            </Badge>
+            <Badge
+              variant="outline"
+              className={
+                mode === 'search'
+                  ? 'border-sky-500/40 text-sky-700 dark:text-sky-300'
+                  : undefined
+              }
+            >
+              {mode === 'search'
+                ? tx('Tìm hồ sơ', 'Find apps')
+                : tx('Chọn lọc', 'Shortlist')}
+            </Badge>
           </>
         }
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={() => void load()}>
+            {mode === 'search' ? (
+              <Button
+                size="sm"
+                className="rounded-full"
+                render={<Link href="/matching" />}
+                nativeButton={false}
+              >
+                <GitCompareArrowsIcon data-icon="inline-start" />
+                {tx('Chạy so khớp', 'Run matching')}
+              </Button>
+            ) : null}
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-full"
+              onClick={() => void load()}
+            >
               <RefreshCwIcon data-icon="inline-start" />
-              Làm mới
+              {tx('Làm mới', 'Refresh')}
             </Button>
-            {session?.role !== 'reviewer' ? (
-              <Button size="sm" render={<Link href="/programs/new" />} nativeButton={false}>
+            {session?.role !== 'reviewer' && mode === 'select' ? (
+              <Button
+                size="sm"
+                className="rounded-full"
+                render={<Link href="/programs/new" />}
+                nativeButton={false}
+              >
                 <PlusIcon data-icon="inline-start" />
-                Tạo mới
+                {tx('Tạo mới', 'Create')}
               </Button>
             ) : null}
           </>
         }
       />
 
-      <StatGrid>
-        <StatCard label="Tổng chương trình" value={items.length} icon={FolderKanbanIcon} hint="Trong workspace" />
-        <StatCard label="Đang mở" value={openCount} icon={SparklesIcon} hint="Nhận hồ sơ" />
-        <StatCard label="Bản nháp" value={draftCount} hint="Chưa public" />
-        <StatCard label="Chỉ tiêu chọn" value={totalSelections} hint="Tổng expected selections" />
-      </StatGrid>
+      {mode === 'select' ? <AiDisclosure /> : null}
 
       {error ? <ErrorAlert message={error} onRetry={load} /> : null}
-
-      <Toolbar>
-        <div className="relative min-w-0 flex-1 sm:max-w-xs">
-          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            className="h-8 pl-8"
-            placeholder="Tìm tên, mục tiêu, ngành…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
-        </div>
-        <p className="text-xs text-muted-foreground sm:ml-auto">
-          Hiển thị <span className="font-medium text-foreground">{filtered.length}</span> / {items.length}
-        </p>
-      </Toolbar>
 
       {items.length === 0 ? (
         <EmptyState
           icon={<FolderKanbanIcon />}
-          title="Chưa có chương trình"
-          description="Tạo chương trình đầu tiên để nhận pitch deck và chạy screening."
+          title={tx('Chưa có chương trình', 'No programs yet')}
+          description={tx(
+            'Tạo chương trình đầu tiên để nhận hồ sơ và chạy chấm điểm.',
+            'Create your first program to receive applications and run scoring.',
+          )}
           action={
             session?.role !== 'reviewer' ? (
-              <Button size="sm" render={<Link href="/programs/new" />} nativeButton={false}>
+              <Button
+                size="sm"
+                className="rounded-full"
+                render={<Link href="/programs/new" />}
+                nativeButton={false}
+              >
                 <PlusIcon data-icon="inline-start" />
-                Tạo chương trình
+                {tx('Tạo chương trình', 'Create program')}
               </Button>
             ) : null
           }
         />
       ) : (
         <>
-          {/* Dense card grid */}
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {filtered.map((p) => (
-              <Card key={p.id} size="sm" className="hover:shadow-md">
-                <CardHeader className="border-b [.border-b]:pb-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <CardTitle className="line-clamp-1">{p.name}</CardTitle>
-                    <StatusBadge status={p.status} kind="program" />
-                  </div>
-                  <p className="line-clamp-2 text-xs text-muted-foreground">
-                    {p.objective || 'Chưa có mục tiêu'}
-                  </p>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-3 pt-0">
-                  <div className="flex flex-wrap gap-1">
-                    {(p.priorityIndustries || []).slice(0, 4).map((i) => (
-                      <Badge key={i} variant="secondary" className="text-[10px]">
-                        {i}
-                      </Badge>
-                    ))}
-                    {(p.priorityIndustries || []).length > 4 ? (
-                      <Badge variant="outline" className="text-[10px]">
-                        +{(p.priorityIndustries || []).length - 4}
-                      </Badge>
-                    ) : null}
-                    {!p.priorityIndustries?.length ? (
-                      <span className="text-xs text-muted-foreground">Chưa gắn ngành</span>
-                    ) : null}
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="rounded-lg bg-muted/50 px-2.5 py-2">
-                      <p className="text-muted-foreground">Chỉ tiêu</p>
-                      <p className="font-semibold tabular-nums">{p.expectedSelections ?? '—'}</p>
-                    </div>
-                    <div className="rounded-lg bg-muted/50 px-2.5 py-2">
-                      <p className="text-muted-foreground">Giai đoạn</p>
-                      <p className="truncate font-semibold">
-                        {(p.acceptedStages || []).slice(0, 2).join(', ') || '—'}
-                      </p>
-                    </div>
-                  </div>
-                </CardContent>
-                <CardFooter className="justify-between">
-                  <span className="text-[11px] text-muted-foreground">
-                    {(p.acceptedStages || []).length} stages · {(p.locations || []).length} locations
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    render={<Link href={`/programs/${p.id}/overview`} />}
-                    nativeButton={false}
-                  >
-                    Mở
-                    <ArrowRightIcon data-icon="inline-end" />
-                  </Button>
-                </CardFooter>
-              </Card>
-            ))}
-          </div>
-
-          {filtered.length === 0 ? (
-            <EmptyState
-              icon={<SearchIcon />}
-              title="Không khớp bộ lọc"
-              description="Thử từ khóa khác hoặc xóa ô tìm kiếm."
-            />
-          ) : null}
-
-          {/* Compact table for overview */}
-          <DataPanel
-            footer={
-              <>
-                <span>{filtered.length} dòng</span>
-                <span>Click để mở overview</span>
-              </>
+          <Section
+            title={
+              mode === 'search'
+                ? tx('Chương trình để so khớp', 'Programs to match against')
+                : tx('1. Tìm chương trình có sẵn', '1. Find an existing program')
+            }
+            description={
+              mode === 'search'
+                ? tx(
+                    'Chọn chương trình → mở tổng quan hoặc chạy so khớp trực tiếp.',
+                    'Pick a program → open overview or run matching directly.',
+                  )
+                : tx(
+                    'Gõ tên, mục tiêu hoặc ngành để lọc danh sách.',
+                    'Type a name, goal, or sector to filter the list.',
+                  )
             }
           >
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Tên</TableHead>
-                  <TableHead>Trạng thái</TableHead>
-                  <TableHead className="hidden md:table-cell">Ngành</TableHead>
-                  <TableHead className="hidden sm:table-cell text-right">Chỉ tiêu</TableHead>
-                  <TableHead className="w-[1%]" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <div className="relative max-w-xl">
+              <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="h-11 pl-10 text-sm"
+                placeholder={tx(
+                  'Tìm tên, mục tiêu, ngành…',
+                  'Search name, goal, sector…',
+                )}
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {tx('Hiển thị', 'Showing')}{' '}
+              <span className="font-medium text-foreground">
+                {filtered.length}
+              </span>{' '}
+              / {items.length}
+            </p>
+
+            {filtered.length === 0 ? (
+              <EmptyState
+                icon={<SearchIcon />}
+                title={tx('Không tìm thấy', 'No matches')}
+                description={tx(
+                  'Thử từ khóa khác hoặc xóa ô tìm kiếm.',
+                  'Try another keyword or clear the search box.',
+                )}
+              />
+            ) : (
+              <ul className="mt-3 divide-y rounded-xl border">
                 {filtered.map((p) => (
-                  <TableRow key={`row-${p.id}`}>
-                    <TableCell className="max-w-[200px]">
-                      <div className="min-w-0">
-                        <p className="truncate font-medium">{p.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">{p.objective || '—'}</p>
+                  <li key={p.id}>
+                    <Link
+                      href={`/programs/${p.id}/overview`}
+                      className="flex flex-col gap-2 px-3 py-3 transition-colors hover:bg-muted/40 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="truncate font-semibold">{p.name}</p>
+                          <StatusBadge status={p.status} kind="program" />
+                        </div>
+                        <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                          {p.objective ||
+                            (p.priorityIndustries || []).slice(0, 3).join(' · ') ||
+                            '—'}
+                        </p>
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={p.status} kind="program" />
-                    </TableCell>
-                    <TableCell className="hidden max-w-[180px] truncate text-xs text-muted-foreground md:table-cell">
-                      {(p.priorityIndustries || []).join(', ') || '—'}
-                    </TableCell>
-                    <TableCell className="hidden text-right tabular-nums sm:table-cell">
-                      {p.expectedSelections ?? '—'}
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        render={<Link href={`/programs/${p.id}/overview`} />}
-                        nativeButton={false}
-                      >
-                        Mở
-                      </Button>
-                    </TableCell>
-                  </TableRow>
+                      <span className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-primary">
+                        {tx('Mở', 'Open')}
+                        <ArrowRightIcon className="size-3.5" />
+                      </span>
+                    </Link>
+                  </li>
                 ))}
-              </TableBody>
-            </Table>
-          </DataPanel>
+              </ul>
+            )}
+          </Section>
+
+          <Section
+            title={
+              mode === 'search'
+                ? tx('Gợi ý chương trình để tìm hồ sơ', 'Suggested programs for discovery')
+                : tx(
+                    '2. Chọn chương trình tốt nhất để làm tiếp',
+                    '2. Pick the best program to continue',
+                  )
+            }
+            description={
+              mode === 'search'
+                ? tx(
+                    'Mở so khớp trên chương trình đang mở — xếp hồ sơ theo độ phù hợp thesis.',
+                    'Open matching on open programs — rank apps by thesis fit.',
+                  )
+                : tx(
+                    'Gợi ý theo trạng thái đang mở, chỉ tiêu và mức độ thiết lập — bấm một cái để vào làm việc.',
+                    'Suggested by open status, quota, and setup depth — open one and continue.',
+                  )
+            }
+          >
+            {recommended.length === 0 ? (
+              <p className="text-sm text-muted-foreground">—</p>
+            ) : (
+              <div
+                className={cn(
+                  'grid w-full gap-3',
+                  recommended.length === 1
+                    ? 'grid-cols-1'
+                    : recommended.length === 2
+                      ? 'grid-cols-1 sm:grid-cols-2'
+                      : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
+                )}
+              >
+                {recommended.map((p, idx) => (
+                  <Link
+                    key={p.id}
+                    href={`/programs/${p.id}/overview`}
+                    className={cn(
+                      'flex w-full min-w-0 flex-col rounded-2xl border bg-card/60 p-4 transition-colors hover:border-primary/40 hover:bg-primary/5',
+                      idx === 0 && 'border-primary/35 bg-primary/5',
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        {idx === 0 ? (
+                          <StarIcon className="size-4 fill-primary text-primary" />
+                        ) : (
+                          <SparklesIcon className="size-4 text-muted-foreground" />
+                        )}
+                        <Badge
+                          variant={idx === 0 ? 'default' : 'secondary'}
+                          className="text-[10px]"
+                        >
+                          {idx === 0
+                            ? tx('Gợi ý hàng đầu', 'Top pick')
+                            : tx(`Gợi ý ${idx + 1}`, `Pick ${idx + 1}`)}
+                        </Badge>
+                      </div>
+                      <StatusBadge status={p.status} kind="program" />
+                    </div>
+                    <p className="mt-2 line-clamp-2 font-heading text-base font-semibold leading-snug">
+                      {p.name}
+                    </p>
+                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                      {p.objective ||
+                        tx('Chưa có mô tả mục tiêu', 'No objective yet')}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-1">
+                      {(p.priorityIndustries || []).slice(0, 3).map((i) => (
+                        <Badge
+                          key={i}
+                          variant="outline"
+                          className="text-[10px]"
+                        >
+                          {i}
+                        </Badge>
+                      ))}
+                    </div>
+                    <div className="mt-auto flex items-center justify-between pt-4 text-xs text-muted-foreground">
+                      <span>
+                        {tx('Chỉ tiêu', 'Quota')}:{' '}
+                        <span className="font-semibold text-foreground">
+                          {p.expectedSelections ?? '—'}
+                        </span>
+                      </span>
+                      <span className="inline-flex items-center gap-1 font-semibold text-primary">
+                        {tx('Làm tiếp', 'Continue')}
+                        <ArrowRightIcon className="size-3.5" />
+                      </span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-4 flex flex-wrap gap-2 border-t pt-4">
+              <Button
+                size="sm"
+                variant="outline"
+                className="rounded-full"
+                render={<Link href="/matching" />}
+                nativeButton={false}
+              >
+                {tx('So khớp giao thoa', 'Cross matching')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="rounded-full"
+                render={<Link href="/settings/organization" />}
+                nativeButton={false}
+              >
+                {tx('Duyệt hồ sơ tổ chức', 'Org moderation')}
+              </Button>
+            </div>
+          </Section>
         </>
       )}
     </PageShell>

@@ -106,7 +106,7 @@ export function Footer() {
           </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" className="rounded-full" render={<Link href="/login" />} nativeButton={false}>
-              {lang === 'vi' ? 'Mở workspace' : 'Open workspace'}
+              {lang === 'vi' ? 'Đăng nhập' : 'Sign in'}
             </Button>
             <Button
               size="sm"

@@ -1,20 +1,33 @@
 'use client'
 
 import { Suspense, useEffect, useRef, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { useAuth } from '@/lib/auth/session'
+import { useAuthStore } from '@/deal-flow/frontend/store/useAuthStore'
 import { Spinner } from '@/components/ui/spinner'
 import type { UserRole } from '@/lib/api/types'
 import { Button } from '@/components/ui/button'
 
 type SsoPayload = {
-  userId: string
-  email: string
+  intent?: 'startup' | 'workspace'
+  // workspace
+  userId?: string
+  email?: string
   displayName?: string
-  organizationId: string
+  organizationId?: string
   role?: UserRole
   picture?: string
   provider?: string
+  // startup tokens
+  user?: {
+    id: string
+    email: string
+    fullName?: string
+    role?: string
+    status?: string
+  }
+  accessToken?: string
+  refreshToken?: string
 }
 
 function decodeBase64UrlJson(raw: string): SsoPayload | null {
@@ -45,16 +58,19 @@ function clearSsoCookie() {
   const expire = 'Thu, 01 Jan 1970 00:00:00 GMT'
   document.cookie = `nexora.sso=; path=/; expires=${expire}; SameSite=Lax`
   document.cookie = `nexora.sso=; path=/; expires=${expire}; SameSite=Lax; Secure`
-  // Host-only variants
   document.cookie = `nexora.sso=; path=/; max-age=0; SameSite=Lax`
   document.cookie = `nexora.sso=; path=/; max-age=0; SameSite=Lax; Secure`
 }
 
 function AuthCallbackInner() {
   const { signIn, ready } = useAuth()
-  const router = useRouter()
+  const setStartupAuth = useAuthStore((s) => s.setAuth)
   const search = useSearchParams()
-  const [message, setMessage] = useState('Đang hoàn tất đăng nhập…')
+  const en =
+    typeof window !== 'undefined' && window.localStorage.getItem('nf-lang') === 'en'
+  const [message, setMessage] = useState(
+    en ? 'Finishing sign-in…' : 'Đang hoàn tất đăng nhập…',
+  )
   const [failed, setFailed] = useState(false)
   const ran = useRef(false)
 
@@ -62,21 +78,93 @@ function AuthCallbackInner() {
     if (!ready || ran.current) return
     ran.current = true
 
+    const intentParam = search?.get('intent')
     const payload = readSsoCookie()
-    if (!payload?.email || !payload.userId || !payload.organizationId) {
+    const intent =
+      intentParam === 'startup' || payload?.intent === 'startup'
+        ? 'startup'
+        : 'workspace'
+
+    if (!payload) {
       setFailed(true)
-      setMessage('Không nhận được phiên Google. Cookie SSO thiếu hoặc hết hạn.')
-      // Do not call clearSession here — it would wipe nothing useful and confuse retries
+      setMessage(
+        en
+          ? 'No Google session received. SSO cookie missing or expired.'
+          : 'Không nhận được phiên Google. Cookie SSO thiếu hoặc hết hạn.',
+      )
       clearSsoCookie()
       window.setTimeout(() => {
-        window.location.replace('/workspace/login?error=sso_session&switch=1')
+        window.location.replace(
+          `/login?tab=${intent === 'startup' ? 'startup' : 'workspace'}&error=sso_session&switch=1`,
+        )
       }, 1400)
       return
     }
 
-    // IMPORTANT: do NOT call clearSession()/wipeClientAuth() before reading is done.
-    // wipeClientAuth also deletes nexora.sso — we already have payload in memory.
-    // signIn() wipes prior local session then writes the new one.
+    // ── Startup Google SSO ──────────────────────────────────
+    if (intent === 'startup' && payload.user) {
+      const st = String(payload.user.status || 'pending').toLowerCase()
+      const name = payload.user.fullName || payload.user.email
+
+      // Tokens optional when API returns ACCOUNT_PENDING without JWT
+      if (payload.accessToken) {
+        try {
+          setStartupAuth(
+            payload.user as any,
+            payload.accessToken,
+            payload.refreshToken || '',
+          )
+        } catch {
+          setFailed(true)
+          setMessage(en ? 'Could not save startup session.' : 'Không ghi được phiên startup.')
+          window.setTimeout(() => {
+            window.location.replace('/login?tab=startup&error=sso_session')
+          }, 1200)
+          return
+        }
+      } else if (typeof window !== 'undefined') {
+        // Persist minimal pending marker so /pending can show email
+        try {
+          window.sessionStorage.setItem(
+            'nf.sso.pending',
+            JSON.stringify({
+              email: payload.user.email,
+              fullName: payload.user.fullName,
+              status: st || 'pending',
+            }),
+          )
+        } catch {
+          /* ignore */
+        }
+      }
+
+      clearSsoCookie()
+      setMessage(en ? `Welcome ${name}…` : `Xin chào ${name}…`)
+      window.setTimeout(() => {
+        if (st === 'pending' || st === 'rejected' || !payload.accessToken) {
+          window.location.replace('/pending')
+        } else {
+          window.location.replace('/dashboard')
+        }
+      }, 250)
+      return
+    }
+
+    // ── Intake / workspace ──────────────────────────────────
+    if (!payload.email || !payload.userId || !payload.organizationId) {
+      setFailed(true)
+      setMessage(
+        en
+          ? 'No Google session received. SSO cookie missing or expired.'
+          : 'Không nhận được phiên Google. Cookie SSO thiếu hoặc hết hạn.',
+      )
+      clearSsoCookie()
+      window.setTimeout(() => {
+        window.location.replace('/login?tab=workspace&error=sso_session&switch=1')
+      }, 1400)
+      return
+    }
+
     try {
       signIn({
         email: payload.email,
@@ -87,27 +175,29 @@ function AuthCallbackInner() {
       })
     } catch {
       setFailed(true)
-      setMessage('Không ghi được phiên đăng nhập.')
+      setMessage(en ? 'Could not save the session.' : 'Không ghi được phiên đăng nhập.')
       window.setTimeout(() => {
-        window.location.replace('/workspace/login?error=sso_session&switch=1')
+        window.location.replace('/login?tab=workspace&error=sso_session&switch=1')
       }, 1200)
       return
     }
 
     clearSsoCookie()
-
     const name = payload.displayName || payload.email
     setMessage(
       search?.get('provider') === 'google'
-        ? `Xin chào ${name}…`
-        : 'Đăng nhập thành công…',
+        ? en
+          ? `Welcome ${name}…`
+          : `Xin chào ${name}…`
+        : en
+          ? 'Signed in…'
+          : 'Đăng nhập thành công…',
     )
 
-    // Hard navigation — avoids Next router effect races that cancelled soft replace
     window.setTimeout(() => {
       window.location.replace('/programs')
     }, 250)
-  }, [ready, signIn, search])
+  }, [ready, signIn, setStartupAuth, search, en])
 
   return (
     <div className="flex min-h-svh flex-col items-center justify-center gap-4 bg-background px-4">
@@ -116,10 +206,10 @@ function AuthCallbackInner() {
       {failed && (
         <Button
           className="rounded-full"
-          render={<a href="/workspace/login?switch=1" />}
+          render={<a href="/login?switch=1" />}
           nativeButton={false}
         >
-          Về trang đăng nhập
+          {en ? 'Back to sign-in' : 'Về trang đăng nhập'}
         </Button>
       )}
     </div>

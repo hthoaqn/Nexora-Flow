@@ -14,11 +14,17 @@ import {
   SandboxSimulation,
 } from '../types';
 
-// Seed committed in repo; on Vercel use /tmp so writes succeed in serverless
+// Seed committed in repo; on Vercel use /tmp so writes succeed in serverless.
+// NOTE: /tmp is ephemeral across cold starts — use globalThis singleton so warm
+// instances keep register/login users in memory. For durable prod → real DB.
 const SEED_FILE = path.join(process.cwd(), 'data_store.json');
 const STORE_FILE = process.env.VERCEL
   ? path.join('/tmp', 'nexora-deal-flow-store.json')
   : SEED_FILE;
+
+function normalizeEmail(email: string) {
+  return String(email || '').trim().toLowerCase();
+}
 
 // Interface for database structure
 export interface DBStore {
@@ -505,7 +511,8 @@ class DatabaseEngine {
 
   // Auth Operations
   public findUserByEmail(email: string) {
-    return this.store.users.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    const key = normalizeEmail(email);
+    return this.store.users.find((u) => normalizeEmail(u.email) === key);
   }
 
   public findUserById(id: string) {
@@ -513,19 +520,21 @@ class DatabaseEngine {
   }
 
   public createUser(email: string, passwordHash: string, fullName: string) {
+    const cleanEmail = normalizeEmail(email);
     const id = `u-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const user = {
       id,
-      email,
-      passwordHash,
-      fullName,
+      email: cleanEmail,
+      // Demo store: plaintext password (rename later when wiring bcrypt + Postgres)
+      passwordHash: String(passwordHash),
+      fullName: String(fullName || '').trim(),
       role: 'startup' as const,
       createdAt: new Date().toISOString(),
     };
     const profile = {
       id,
-      fullName,
-      email,
+      fullName: user.fullName,
+      email: cleanEmail,
       role: 'startup' as const,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -536,6 +545,11 @@ class DatabaseEngine {
     this.saveStore();
 
     return { user, profile };
+  }
+
+  /** Verify login credentials (demo: plain password compare). */
+  public verifyPassword(user: { passwordHash: string }, password: string) {
+    return String(user.passwordHash) === String(password);
   }
 
   public getProfile(userId: string) {
@@ -769,4 +783,15 @@ class DatabaseEngine {
   }
 }
 
-export const db = new DatabaseEngine();
+/**
+ * Serverless-safe singleton: one engine per warm Node process.
+ * Without this, register writes on instance A and login hits instance B → "wrong password".
+ */
+const globalForDb = globalThis as unknown as {
+  __nexoraDealFlowDb?: DatabaseEngine;
+};
+
+export const db: DatabaseEngine =
+  globalForDb.__nexoraDealFlowDb ?? new DatabaseEngine();
+
+globalForDb.__nexoraDealFlowDb = db;

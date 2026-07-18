@@ -1,5 +1,6 @@
 'use client'
 
+import { useTx } from '@/lib/tx'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { toast } from 'sonner'
@@ -24,6 +25,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Field, FieldGroup, FieldLabel, FieldDescription } from '@/components/ui/field'
 import { Spinner } from '@/components/ui/spinner'
+import { RubricEditor } from '@/components/dashboard/RubricEditor'
 
 function parseList(value: string): string[] {
   return value
@@ -33,6 +35,7 @@ function parseList(value: string): string[] {
 }
 
 export default function ProgramSettingsPage() {
+  const { tx } = useTx()
   const { session } = useAuth()
   const params = useParams()
   const programId = String(params?.programId ?? "")
@@ -71,7 +74,7 @@ export default function ProgramSettingsPage() {
       setStatus(p.status)
       setCriteria(p.rubric?.criteria || {})
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Lỗi')
+      setError(e instanceof Error ? e.message : tx('Lỗi', 'Error'))
     } finally {
       setLoading(false)
     }
@@ -84,11 +87,11 @@ export default function ProgramSettingsPage() {
   const onSave = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!session || session.role === 'reviewer') {
-      setError('Không có quyền')
+      setError(tx('Không có quyền', 'No permission'))
       return
     }
     if (Object.keys(criteria).length && Math.round(weightTotal) !== 100) {
-      setError(`Rubric phải = 100 (hiện ${weightTotal})`)
+      setError(tx(`Rubric phải = 100 (hiện ${weightTotal})`, `Rubric weights must total 100 (currently ${weightTotal})`))
       return
     }
     setSaving(true)
@@ -116,9 +119,9 @@ export default function ProgramSettingsPage() {
           ? { version: 'startup-screening-v1', criteria }
           : undefined,
       })
-      toast.success('Đã lưu')
+      toast.success(tx('Đã lưu', 'Saved'))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Lỗi')
+      setError(err instanceof Error ? err.message : tx('Lỗi', 'Error'))
     } finally {
       setSaving(false)
     }
@@ -129,8 +132,8 @@ export default function ProgramSettingsPage() {
   return (
     <PageShell>
       <PageHeader
-        title="Cài đặt chương trình"
-        description="Cập nhật thông tin, hard filters và rubric."
+        title={tx('Cài đặt chương trình', 'Program settings')}
+        description={tx('Cập nhật thông tin, hard filters và rubric.', 'Update details, hard filters, and the rubric.')}
         meta={
           <Badge variant={Math.round(weightTotal) === 100 || !Object.keys(criteria).length ? 'default' : 'destructive'}>
             Rubric {weightTotal || 0}
@@ -139,7 +142,7 @@ export default function ProgramSettingsPage() {
         actions={
           <Button size="sm" type="submit" form="prog-settings" disabled={saving}>
             {saving ? <Spinner data-icon="inline-start" /> : null}
-            Lưu thay đổi
+            {tx('Lưu thay đổi', 'Save changes')}
           </Button>
         }
       />
@@ -147,14 +150,14 @@ export default function ProgramSettingsPage() {
 
       <form id="prog-settings" onSubmit={onSave}>
         <SplitGrid>
-          <Section title="Thông tin" description="Metadata & filters">
+          <Section title={tx('Thông tin', 'Details')} description="Metadata & filters">
             <FieldGroup className="gap-3">
               <Field>
-                <FieldLabel>Tên</FieldLabel>
+                <FieldLabel>{tx('Tên', 'Name')}</FieldLabel>
                 <Input value={name} onChange={(e) => setName(e.target.value)} required />
               </Field>
               <Field>
-                <FieldLabel>Mục tiêu</FieldLabel>
+                <FieldLabel>{tx('Mục tiêu', 'Objective')}</FieldLabel>
                 <Textarea
                   className="min-h-20"
                   value={objective}
@@ -164,23 +167,23 @@ export default function ProgramSettingsPage() {
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field>
-                  <FieldLabel>Trạng thái</FieldLabel>
+                  <FieldLabel>{tx('Trạng thái', 'Status')}</FieldLabel>
                   <Select value={status} onValueChange={(v) => v && setStatus(v as ProgramStatus)}>
                     <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectGroup>
-                        <SelectItem value="DRAFT">Nháp</SelectItem>
-                        <SelectItem value="OPEN">Mở</SelectItem>
-                        <SelectItem value="CLOSED">Đóng</SelectItem>
-                        <SelectItem value="ARCHIVED">Lưu trữ</SelectItem>
+                        <SelectItem value="DRAFT">{tx('Nháp', 'Draft')}</SelectItem>
+                        <SelectItem value="OPEN">{tx('Mở', 'Open')}</SelectItem>
+                        <SelectItem value="CLOSED">{tx('Đóng', 'Closed')}</SelectItem>
+                        <SelectItem value="ARCHIVED">{tx('Lưu trữ', 'Archived')}</SelectItem>
                       </SelectGroup>
                     </SelectContent>
                   </Select>
                 </Field>
                 <Field>
-                  <FieldLabel>Chỉ tiêu</FieldLabel>
+                  <FieldLabel>{tx('Chỉ tiêu', 'Quota')}</FieldLabel>
                   <Input
                     type="number"
                     value={expected}
@@ -189,24 +192,24 @@ export default function ProgramSettingsPage() {
                 </Field>
               </div>
               <Field>
-                <FieldLabel>Ngành</FieldLabel>
+                <FieldLabel>{tx('Ngành', 'Sectors')}</FieldLabel>
                 <Input value={industries} onChange={(e) => setIndustries(e.target.value)} />
-                <FieldDescription>Phân tách bằng dấu phẩy</FieldDescription>
+                <FieldDescription>{tx('Phân tách bằng dấu phẩy', 'Comma-separated')}</FieldDescription>
               </Field>
               <Field>
-                <FieldLabel>Giai đoạn</FieldLabel>
+                <FieldLabel>{tx('Giai đoạn', 'Stages')}</FieldLabel>
                 <Input value={stages} onChange={(e) => setStages(e.target.value)} />
               </Field>
               <Field>
-                <FieldLabel>Địa bàn</FieldLabel>
+                <FieldLabel>{tx('Địa bàn', 'Regions')}</FieldLabel>
                 <Input value={locations} onChange={(e) => setLocations(e.target.value)} />
               </Field>
               <Field>
-                <FieldLabel>Trường bắt buộc</FieldLabel>
+                <FieldLabel>{tx('Trường bắt buộc', 'Required fields')}</FieldLabel>
                 <Input value={requiredFields} onChange={(e) => setRequiredFields(e.target.value)} />
               </Field>
               <Field>
-                <FieldLabel>Mô tả</FieldLabel>
+                <FieldLabel>{tx('Mô tả', 'Description')}</FieldLabel>
                 <Textarea
                   className="min-h-16"
                   value={description}
@@ -217,47 +220,15 @@ export default function ProgramSettingsPage() {
           </Section>
 
           <Section
-            title="Rubric"
-            description="Tổng weight = 100"
+            title={tx('Rubric chấm điểm', 'Scoring rubric')}
+            description={tx('Thêm chỉ tiêu · tổng weight = 100', 'Add criteria · weights total 100')}
             action={
               <Badge variant={Math.round(weightTotal) === 100 ? 'default' : 'destructive'}>
                 {weightTotal}
               </Badge>
             }
           >
-            <div className="flex flex-col gap-2">
-              {Object.entries(criteria).map(([key, c]) => (
-                <div
-                  key={key}
-                  className="grid grid-cols-[1fr_5rem] items-center gap-2 rounded-lg border bg-muted/20 p-2"
-                >
-                  <Input
-                    className="h-8"
-                    value={c.name}
-                    onChange={(e) =>
-                      setCriteria((prev) => ({
-                        ...prev,
-                        [key]: { ...prev[key], name: e.target.value },
-                      }))
-                    }
-                  />
-                  <Input
-                    className="h-8"
-                    type="number"
-                    value={c.weight}
-                    onChange={(e) =>
-                      setCriteria((prev) => ({
-                        ...prev,
-                        [key]: { ...prev[key], weight: Number(e.target.value) },
-                      }))
-                    }
-                  />
-                </div>
-              ))}
-              {!Object.keys(criteria).length ? (
-                <p className="text-sm text-muted-foreground">Chưa có criteria.</p>
-              ) : null}
-            </div>
+            <RubricEditor criteria={criteria} onChange={setCriteria} />
           </Section>
         </SplitGrid>
       </form>

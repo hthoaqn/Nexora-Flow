@@ -128,6 +128,13 @@ export interface PartnerProfileDTO {
 
   challengeDescription: string | null;
   contactEmail: string | null;
+  contactPerson?: string | null;
+  phoneNumber?: string | null;
+
+  /** Câu hỏi vòng 2 do intake thiết lập sẵn (startup trả lời text / video) */
+  round2Questions?: string[];
+  /** Ghi chú/yêu cầu mặc định cho vòng 1 (ngoài video call) */
+  round1Note?: string | null;
 
   isActive: boolean;
   isDemo: boolean;
@@ -198,6 +205,47 @@ export interface MatchResultDTO {
   updatedAt: string;
 }
 
+/**
+ * Multi-round pipeline:
+ * pending → round1 (phỏng vấn) → round2 (câu hỏi) → round2_submitted → accepted.
+ * Reject ở bất kỳ vòng nào → rejected.
+ */
+export type ConnectionStatus =
+  | 'pending'
+  | 'round1'
+  | 'round2'
+  | 'round2_submitted'
+  | 'accepted'
+  | 'rejected'
+  | 'cancelled';
+
+export interface ConnectionRound1DTO {
+  mode: 'video_call' | 'custom';
+  meetingLink: string | null;
+  scheduledAt: string | null;
+  note: string | null;
+  decidedAt?: string | null;
+}
+
+export interface Round2AnswerDTO {
+  question: string;
+  text: string;
+  videoFileId: string | null;
+}
+
+export interface ConnectionRound2DTO {
+  questions: string[];
+  answers: Round2AnswerDTO[];
+  submittedAt: string | null;
+}
+
+export interface ConnectionEventDTO {
+  at: string;
+  actor: 'startup' | 'intake' | 'system';
+  type: string;
+  note?: string;
+}
+
 export interface ConnectionRequestDTO {
   id: string;
   startupId: string;
@@ -205,9 +253,16 @@ export interface ConnectionRequestDTO {
   matchId: string;
   matchScore: number;
   message: string;
-  status: 'pending' | 'accepted' | 'rejected' | 'cancelled';
+  status: ConnectionStatus;
+  round1?: ConnectionRound1DTO | null;
+  round2?: ConnectionRound2DTO | null;
+  timeline?: ConnectionEventDTO[];
+  decisionNote?: string | null;
   partnerName?: string; // Joined for UI
   partnerType?: string; // Joined for UI
+  startupName?: string; // Joined for intake UI
+  startupProfile?: Partial<StartupProfileDTO>; // Joined snapshot for intake UI
+  partner?: PartnerProfileDTO; // Joined khi accepted (thông tin liên hệ)
   isDemo?: boolean;
   is_demo?: boolean;
   createdAt: string;

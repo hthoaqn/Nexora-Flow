@@ -1064,21 +1064,10 @@ html.js-motion .float-chip:not(.is-revealed) {
   pointer-events: none;
   overflow: hidden;
   border-radius: inherit;
+  /* no purple glow — keep frame clean */
 }
 .dash-ambient::before {
-  content: "";
-  position: absolute;
-  top: -12%;
-  left: -15%;
-  right: -15%;
-  height: 50%;
-  background:
-    radial-gradient(ellipse 50% 65% at 15% 0%, color-mix(in oklch, var(--primary) 10%, transparent), transparent 60%),
-    radial-gradient(ellipse 40% 55% at 85% 0%, color-mix(in oklch, var(--primary) 7%, transparent), transparent 55%);
-  filter: blur(32px);
-}
-.dark .dash-ambient::before {
-  opacity: 0.9;
+  display: none;
 }
 
 /* Route-change entrance for page content */
@@ -1269,4 +1258,162 @@ html.js-motion .float-chip:not(.is-revealed) {
 .data-row-card:hover {
   border-color: color-mix(in oklch, var(--primary) 35%, var(--border));
   box-shadow: 0 12px 30px -22px color-mix(in oklch, var(--primary) 50%, transparent);
+}
+
+/* ═══════════════════════════════════════════════════
+   Startup portal — motion + premium surfaces
+═══════════════════════════════════════════════════ */
+
+.portal-stagger > * {
+  opacity: 0;
+  animation: portalRise 0.7s var(--ease-out-expo) forwards;
+}
+.portal-stagger > *:nth-child(1) { animation-delay: 0.04s; }
+.portal-stagger > *:nth-child(2) { animation-delay: 0.1s; }
+.portal-stagger > *:nth-child(3) { animation-delay: 0.16s; }
+.portal-stagger > *:nth-child(4) { animation-delay: 0.22s; }
+.portal-stagger > *:nth-child(5) { animation-delay: 0.28s; }
+.portal-stagger > *:nth-child(6) { animation-delay: 0.34s; }
+.portal-stagger > *:nth-child(7) { animation-delay: 0.4s; }
+.portal-stagger > *:nth-child(8) { animation-delay: 0.46s; }
+
+@keyframes portalRise {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.985);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.portal-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: calc(var(--radius) * 1.15);
+  background: color-mix(in oklch, var(--card) 92%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 90%, transparent);
+  box-shadow:
+    0 1px 0 0 color-mix(in oklch, white 6%, transparent) inset,
+    0 18px 40px -28px color-mix(in oklch, var(--primary) 35%, transparent);
+  transition:
+    transform 0.45s var(--ease-out-expo),
+    box-shadow 0.45s var(--ease-out-expo),
+    border-color 0.35s ease;
+}
+.portal-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in oklch, var(--primary) 32%, var(--border));
+  box-shadow:
+    0 1px 0 0 color-mix(in oklch, white 8%, transparent) inset,
+    0 28px 50px -24px color-mix(in oklch, var(--primary) 45%, transparent);
+}
+.portal-card::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklch, var(--primary) 55%, transparent),
+    transparent
+  );
+  opacity: 0.7;
+}
+
+.portal-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: calc(var(--radius) * 1.35);
+  border: 1px solid color-mix(in oklch, var(--border) 95%, transparent);
+  background: var(--card);
+  box-shadow:
+    0 1px 0 0 color-mix(in oklch, white 5%, transparent) inset,
+    0 12px 32px -28px color-mix(in oklch, var(--foreground) 18%, transparent);
+}
+
+.portal-stat-value {
+  font-family: var(--font-d);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(
+    135deg,
+    var(--foreground) 0%,
+    color-mix(in oklch, var(--primary) 70%, var(--foreground)) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.portal-progress {
+  height: 0.35rem;
+  border-radius: 999px;
+  background: var(--muted);
+  overflow: hidden;
+}
+.portal-progress > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--primary) 75%, transparent),
+    var(--primary)
+  );
+  box-shadow: 0 0 12px color-mix(in oklch, var(--primary) 45%, transparent);
+  transition: width 0.8s var(--ease-out-expo);
+}
+
+.portal-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklch, var(--primary) 25%, var(--border));
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+  color: var(--primary);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.25rem 0.65rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-stagger > *,
+  .portal-card {
+    animation: none !important;
+    transition: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+  }
+}
+
+/* Portal hero: no aurora / purple gradient overlay */
+.portal-hero::after {
+  display: none;
+}
+
+/* ── Smooth tab-panel entrance ── */
+[role="tabpanel"] {
+  animation: tabFadeIn 0.3s var(--ease-out-expo);
+}
+@keyframes tabFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-hero::after,
+  [role="tabpanel"] {
+    animation: none !important;
+  }
 }

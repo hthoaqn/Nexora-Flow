@@ -11,7 +11,9 @@ import {
   MailIcon,
   MessageSquareIcon,
   RocketIcon,
+  ShieldCheckIcon,
   ShuffleIcon,
+  VideoIcon,
   SnowflakeIcon,
   SparklesIcon,
   TrendingUpIcon,
@@ -132,6 +134,14 @@ export function HomePage() {
             q: 'Hệ thống có tự gửi email không?',
             a: 'Không. Mọi email/lời mời ở trạng thái nháp. Bạn xem, sửa và gửi thủ công.',
           },
+          {
+            q: 'Lịch họp được đặt như thế nào?',
+            a: 'Hệ thống đồng bộ lịch hai bên, tìm khung giờ trống chung, đề xuất thời gian và tạo phòng họp trực tuyến kèm lời mời — bạn xác nhận trước khi lời mời được gửi đi.',
+          },
+          {
+            q: 'Tôi theo dõi kết quả kết nối ở đâu?',
+            a: 'Dashboard thống kê số kết nối, tỷ lệ phản hồi, số cuộc gặp và kết quả hợp tác. Phản hồi sau mỗi kết nối được dùng để cải thiện chất lượng đề xuất của AI.',
+          },
         ]
       : [
           {
@@ -149,6 +159,14 @@ export function HomePage() {
           {
             q: 'Does it auto-send emails?',
             a: 'No. Intros stay as drafts until you review, edit, and send.',
+          },
+          {
+            q: 'How are meetings scheduled?',
+            a: 'The system syncs both calendars, finds shared availability, suggests slots, and creates an online meeting with invites — you confirm before anything is sent.',
+          },
+          {
+            q: 'Where do I track outcomes?',
+            a: 'A dashboard tracks connections, response rates, meetings, and deal outcomes. Post-connection feedback continuously sharpens the AI matching.',
           },
         ]
 
@@ -223,22 +241,13 @@ export function HomePage() {
                 render={<a href="/login" />}
                 nativeButton={false}
               >
-                {lang === 'vi' ? 'Đăng nhập startup' : 'Startup sign in'}
+                {t.heroPrimary}
                 <ArrowRightIcon className="size-4 shrink-0" />
               </Button>
               <Button
                 size="lg"
                 variant="outline"
                 className="h-12 rounded-full border-border/80 bg-background/40 px-7 backdrop-blur-md hover:bg-background/70"
-                render={<a href="/workspace/login" />}
-                nativeButton={false}
-              >
-                {lang === 'vi' ? 'Intake workspace' : 'Intake workspace'}
-              </Button>
-              <Button
-                size="lg"
-                variant="ghost"
-                className="h-12 rounded-full px-5"
                 render={<a href="#process" />}
                 nativeButton={false}
               >
@@ -812,6 +821,173 @@ export function HomePage() {
                 <CheckCircle2Icon className="size-3 text-primary" />
                 {chip}
               </span>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Connection journey — show the real pipeline, let the product speak */}
+      <section className="section-shell py-16 sm:py-24" id="journey">
+        <div className="relative mx-auto max-w-6xl px-4 sm:px-6">
+          <div className="mx-auto mb-10 max-w-2xl text-center" data-rise>
+            <Badge
+              variant="secondary"
+              className="mb-4 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-primary"
+            >
+              {lang === 'vi' ? 'Hành trình kết nối' : 'The connection journey'}
+            </Badge>
+            <h2 className="font-heading text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
+              {lang === 'vi'
+                ? 'Từ hồ sơ đến cái bắt tay — từng bước đều minh bạch'
+                : 'From profile to handshake — every step is transparent'}
+            </h2>
+            <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-muted-foreground sm:text-base">
+              {lang === 'vi'
+                ? 'Đây là quy trình thật đang chạy trên nền tảng — không hộp đen, không cam kết suông. Hai phía đều thấy mình đang ở bước nào và vì sao.'
+                : 'This is the live pipeline running on the platform — no black box, no empty promises. Both sides always see where they are and why.'}
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            {(lang === 'vi'
+              ? [
+                  {
+                    icon: FileTextIcon,
+                    step: '01',
+                    t: 'Hồ sơ trong vài phút',
+                    d: 'Tải pitch deck / ảnh — AI trích xuất và điền form, bạn chỉ kiểm tra rồi xác nhận.',
+                  },
+                  {
+                    icon: SparklesIcon,
+                    step: '02',
+                    t: 'Điểm so khớp có bằng chứng',
+                    d: 'Mỗi điểm số kèm lý do khớp, yêu cầu còn thiếu và rủi ro — đọc là hiểu.',
+                  },
+                  {
+                    icon: UserCheckIcon,
+                    step: '03',
+                    t: 'Tổ chức kiểm duyệt',
+                    d: 'Yêu cầu kết nối đến thẳng inbox của tổ chức — con người duyệt, không auto.',
+                  },
+                  {
+                    icon: VideoIcon,
+                    step: '04',
+                    t: 'Hai vòng thẩm định',
+                    d: 'Vòng 1 phỏng vấn video 1-1, Vòng 2 trả lời câu hỏi bằng văn bản hoặc video tự quay.',
+                  },
+                  {
+                    icon: HandshakeIcon,
+                    step: '05',
+                    t: 'Kết nối thật',
+                    d: 'Qua thẩm định, hai bên mở thông tin liên hệ trực tiếp — làm việc ngoài đời thật.',
+                  },
+                ]
+              : [
+                  {
+                    icon: FileTextIcon,
+                    step: '01',
+                    t: 'Profile in minutes',
+                    d: 'Upload a deck / image — AI extracts and fills the form, you just re-check and confirm.',
+                  },
+                  {
+                    icon: SparklesIcon,
+                    step: '02',
+                    t: 'Evidence-bound score',
+                    d: 'Every score ships with matched reasons, missing requirements and risks — readable at a glance.',
+                  },
+                  {
+                    icon: UserCheckIcon,
+                    step: '03',
+                    t: 'Human review',
+                    d: 'Connection requests land in the organization inbox — humans approve, nothing is automatic.',
+                  },
+                  {
+                    icon: VideoIcon,
+                    step: '04',
+                    t: 'Two vetting rounds',
+                    d: 'Round 1 is a 1-1 video interview; Round 2 answers the org’s questions in text or recorded video.',
+                  },
+                  {
+                    icon: HandshakeIcon,
+                    step: '05',
+                    t: 'A real connection',
+                    d: 'Pass the rounds and both sides unlock direct contacts — work continues in real life.',
+                  },
+                ]
+            ).map((s) => (
+              <Card
+                key={s.step}
+                data-rise
+                className="spotlight-card h-full gap-0 border-border/60 bg-card/80 py-0"
+              >
+                <CardHeader className="gap-2.5 px-5 py-5">
+                  <div className="flex items-center justify-between">
+                    <span className="icon-tile">
+                      <s.icon className="size-4" />
+                    </span>
+                    <span className="font-heading text-xs font-bold tracking-widest text-primary/60">
+                      {s.step}
+                    </span>
+                  </div>
+                  <CardTitle className="font-heading text-base">{s.t}</CardTitle>
+                  <CardDescription className="text-xs leading-relaxed">
+                    {s.d}
+                  </CardDescription>
+                </CardHeader>
+              </Card>
+            ))}
+          </div>
+
+          {/* Data promise — quiet trust, no hard sell */}
+          <div
+            data-rise
+            className="mt-8 grid gap-3 rounded-2xl border border-border/60 bg-muted/20 p-4 sm:grid-cols-3 sm:p-5"
+          >
+            {(lang === 'vi'
+              ? [
+                  {
+                    icon: LockIcon,
+                    t: 'Dữ liệu của bạn, quyền của bạn',
+                    d: 'Hồ sơ chỉ chia sẻ khi bạn chủ động kết nối. Rút lại đồng ý bất cứ lúc nào.',
+                  },
+                  {
+                    icon: ShieldCheckIcon,
+                    t: 'Video chỉ đến đúng nơi',
+                    d: 'Câu trả lời và video vòng thẩm định chỉ tổ chức đang xét duyệt xem được.',
+                  },
+                  {
+                    icon: UserCheckIcon,
+                    t: 'AI gợi ý, con người quyết',
+                    d: 'Không có quyết định nào tự động — mọi phê duyệt do người thật thực hiện.',
+                  },
+                ]
+              : [
+                  {
+                    icon: LockIcon,
+                    t: 'Your data, your consent',
+                    d: 'Profiles are shared only when you initiate a connection. Withdraw consent anytime.',
+                  },
+                  {
+                    icon: ShieldCheckIcon,
+                    t: 'Videos reach one place only',
+                    d: 'Vetting answers and videos are visible only to the reviewing organization.',
+                  },
+                  {
+                    icon: UserCheckIcon,
+                    t: 'AI suggests, humans decide',
+                    d: 'No automated decisions — every approval is made by a real person.',
+                  },
+                ]
+            ).map((x) => (
+              <div key={x.t} className="flex gap-3">
+                <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <x.icon className="size-4" />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold">{x.t}</p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{x.d}</p>
+                </div>
+              </div>
             ))}
           </div>
         </div>

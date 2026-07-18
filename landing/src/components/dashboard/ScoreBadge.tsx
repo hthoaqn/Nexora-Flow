@@ -1,3 +1,5 @@
+'use client'
+import { useTx } from '@/lib/tx'
 import { Badge } from '@/components/ui/badge'
 import { confidenceLabel } from '@/lib/status'
 import { cn } from '@/lib/utils'
@@ -35,6 +37,7 @@ export function ScoreBadge({
   score?: number | null
   size?: 'sm' | 'md' | 'lg'
 }) {
+  const { tx } = useTx()
   if (score == null || Number.isNaN(score)) {
     return <span className="text-sm text-muted-foreground">—</span>
   }
@@ -58,7 +61,7 @@ export function ScoreBadge({
       style={{
         background: `conic-gradient(from -90deg, ${tone.arc} ${n * 3.6}deg, color-mix(in oklch, var(--muted) 80%, transparent) 0)`,
       }}
-      title={`Điểm: ${n}`}
+      title={tx(`Điểm: ${n}`, `Score: ${n}`)}
     >
       <span className="absolute inset-[3px] flex items-center justify-center rounded-full bg-card">
         {n}
@@ -68,6 +71,7 @@ export function ScoreBadge({
 }
 
 export function ConfidenceIndicator({ confidence }: { confidence?: number | null }) {
+  const { tx } = useTx()
   if (confidence == null) {
     return <span className="text-xs text-muted-foreground">—</span>
   }
@@ -76,9 +80,9 @@ export function ConfidenceIndicator({ confidence }: { confidence?: number | null
     <Badge
       variant={badge}
       className="rounded-full text-[10px]"
-      title="Độ chắc chắn của dữ liệu/bằng chứng — không phải chất lượng startup"
+      title={tx('Độ chắc chắn của dữ liệu/bằng chứng — không phải chất lượng startup', 'Confidence of the data/evidence — not startup quality')}
     >
-      {label} · {Math.round(confidence * 100)}%
+      {tx(label)} · {Math.round(confidence * 100)}%
     </Badge>
   )
 }

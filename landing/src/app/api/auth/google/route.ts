@@ -1,29 +1,31 @@
 import { NextResponse } from 'next/server'
+import {
+  googleClientConfig,
+  googleRedirectUri,
+  oauthAppOrigin,
+} from '@/lib/auth/google-oauth'
 
-function appOrigin(req: Request) {
-  const env = process.env.NEXT_PUBLIC_APP_URL
-  if (env) return env.replace(/\/$/, '')
-  const host = req.headers.get('x-forwarded-host') || req.headers.get('host')
-  const proto = req.headers.get('x-forwarded-proto') || 'https'
-  if (host) return `${proto}://${host}`
-  return 'https://nexora-flow.cloud'
-}
-
+/**
+ * Google OAuth start.
+ * Query: intent=workspace|startup (default workspace)
+ *        prompt=select_account (default)
+ */
 export async function GET(req: Request) {
-  const clientId =
-    process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
+  const { clientId } = googleClientConfig()
+  const origin = oauthAppOrigin(req)
 
   if (!clientId) {
     return NextResponse.redirect(
-      new URL('/workspace/login?error=google_not_configured', appOrigin(req)),
+      new URL('/login?tab=workspace&error=google_not_configured', origin),
     )
   }
 
   const { searchParams } = new URL(req.url)
-  // Always force account picker so switching Google users works
   const prompt = searchParams.get('prompt') || 'select_account'
+  const intent =
+    searchParams.get('intent') === 'startup' ? 'startup' : 'workspace'
 
-  const redirectUri = `${appOrigin(req)}/api/auth/google/callback`
+  const redirectUri = googleRedirectUri(req)
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth')
   url.searchParams.set('client_id', clientId)
   url.searchParams.set('redirect_uri', redirectUri)
@@ -32,9 +34,30 @@ export async function GET(req: Request) {
   url.searchParams.set('access_type', 'online')
   url.searchParams.set('prompt', prompt)
   url.searchParams.set('include_granted_scopes', 'true')
+  url.searchParams.set('state', intent)
 
-  // Clear any stale SSO cookie server-side before new login
+  console.info('[google oauth start]', {
+    redirectUri,
+    intent,
+    clientIdPrefix: clientId.slice(0, 12),
+  })
+
   const res = NextResponse.redirect(url.toString())
   res.cookies.set('nexora.sso', '', { path: '/', maxAge: 0 })
+  res.cookies.set('nexora.sso.intent', intent, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 600,
+  })
+  // Remember exact redirect_uri used at authorize time (must match token exchange)
+  res.cookies.set('nexora.sso.redirect_uri', redirectUri, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 600,
+  })
   return res
 }

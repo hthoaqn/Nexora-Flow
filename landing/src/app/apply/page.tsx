@@ -1,4 +1,7 @@
+'use client'
+
 import Link from 'next/link'
+import { useTx } from '@/lib/tx'
 import { Logo } from '@/components/Logo'
 import { Button } from '@/components/ui/button'
 import {
@@ -11,6 +14,7 @@ import {
 
 /** Bare /apply — needs a submission token from the program */
 export default function ApplyIndexPage() {
+  const { tx } = useTx()
   return (
     <div className="relative flex min-h-svh flex-col items-center justify-center bg-background px-4">
       <div aria-hidden className="pointer-events-none absolute inset-0">
@@ -19,9 +23,9 @@ export default function ApplyIndexPage() {
       <Card className="relative z-10 w-full max-w-md shadow-lg">
         <CardHeader className="items-center text-center">
           <Logo size={36} />
-          <CardTitle className="font-heading text-xl">Link nộp hồ sơ</CardTitle>
+          <CardTitle className="font-heading text-xl">{tx('Link nộp hồ sơ', 'Application link')}</CardTitle>
           <CardDescription>
-            Trang này cần mã chương trình. Mở link đầy đủ từ program overview, dạng{' '}
+            {tx('Trang này cần mã chương trình. Mở link đầy đủ từ program overview, dạng', 'This page needs a program token. Open the full link from the program overview, like')}{' '}
             <code className="rounded bg-muted px-1 py-0.5 text-[11px]">
               /apply/&lt;token&gt;
             </code>
@@ -30,7 +34,7 @@ export default function ApplyIndexPage() {
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
           <Button className="w-full rounded-full" render={<Link href="/" />} nativeButton={false}>
-            Về trang chủ
+            {tx('Về trang chủ', 'Back to home')}
           </Button>
           <Button
             variant="outline"
@@ -38,7 +42,7 @@ export default function ApplyIndexPage() {
             render={<Link href="/login" />}
             nativeButton={false}
           >
-            Đăng nhập workspace
+            {tx('Đăng nhập workspace', 'Workspace sign-in')}
           </Button>
         </CardContent>
       </Card>

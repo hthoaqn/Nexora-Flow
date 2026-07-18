@@ -7,6 +7,8 @@
 import React, { useState } from 'react';
 import { ExtractionResultDTO, StartupProfileDTO } from '../../types';
 import { Check, X, Edit3, Trash2, ArrowRight, Sparkles, HelpCircle } from 'lucide-react';
+import { usePortalI18n } from '../i18n';
+import { fieldLabel } from './CompareChanges';
 
 interface ExtractionReviewProps {
   currentProfile: StartupProfileDTO | null;
@@ -39,39 +41,41 @@ export default function ExtractionReview({
   onMergeAllAccepted,
   onDismissAll,
 }: ExtractionReviewProps) {
+  const { lang } = usePortalI18n();
+  const tx = (vi: string, en: string) => (lang === 'vi' ? vi : en);
   const [editingField, setEditingField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>('');
 
   const TYPE_BADGES: Record<string, string> = {
-    company_name: 'Tên Doanh nghiệp',
+    company_name: tx('Tên Doanh nghiệp', 'Company name'),
     tagline: 'Tagline',
-    description: 'Mô tả',
+    description: tx('Mô tả', 'Description'),
     website: 'Website',
     email: 'Email',
-    phone: 'Điện thoại',
-    industry: 'Lĩnh vực',
-    technology: 'Công nghệ',
-    market: 'Thị trường',
-    startup_stage: 'Giai đoạn',
-    funding: 'Gọi vốn',
-    valuation: 'Định giá',
-    revenue: 'Doanh thu',
+    phone: tx('Điện thoại', 'Phone'),
+    industry: tx('Lĩnh vực', 'Industry'),
+    technology: tx('Công nghệ', 'Technology'),
+    market: tx('Thị trường', 'Market'),
+    startup_stage: tx('Giai đoạn', 'Stage'),
+    funding: tx('Gọi vốn', 'Funding'),
+    valuation: tx('Định giá', 'Valuation'),
+    revenue: tx('Doanh thu', 'Revenue'),
     traction: 'Traction',
-    customer: 'Khách hàng',
-    business_model: 'Mô hình kinh doanh',
-    problem: 'Vấn đề',
-    solution: 'Giải pháp',
-    founder: 'Sáng lập viên',
-    team: 'Đội ngũ',
-    location: 'Địa điểm',
-    social: 'Mạng xã hội',
-    patent: 'Bằng sáng chế',
-    award: 'Giải thưởng',
-    partnership: 'Hợp tác',
-    timeline: 'Lịch trình',
+    customer: tx('Khách hàng', 'Customer'),
+    business_model: tx('Mô hình kinh doanh', 'Business model'),
+    problem: tx('Vấn đề', 'Problem'),
+    solution: tx('Giải pháp', 'Solution'),
+    founder: tx('Sáng lập viên', 'Founder'),
+    team: tx('Đội ngũ', 'Team'),
+    location: tx('Địa điểm', 'Location'),
+    social: tx('Mạng xã hội', 'Social'),
+    patent: tx('Bằng sáng chế', 'Patent'),
+    award: tx('Giải thưởng', 'Award'),
+    partnership: tx('Hợp tác', 'Partnership'),
+    timeline: tx('Lịch trình', 'Timeline'),
     roadmap: 'Roadmap',
-    metric: 'Chỉ số',
-    other: 'Khác'
+    metric: tx('Chỉ số', 'Metric'),
+    other: tx('Khác', 'Other')
   };
 
   const handleStartEdit = (field: string, val: any) => {
@@ -106,50 +110,50 @@ export default function ExtractionReview({
   };
 
   const getConfidenceBadgeColor = (conf: number) => {
-    if (conf >= 0.9) return 'bg-emerald-50 text-emerald-800 border-emerald-200';
+    if (conf >= 0.9) return 'bg-primary/10 text-primary border-primary/30';
     if (conf >= 0.7) return 'bg-amber-50 text-amber-800 border-amber-200';
     return 'bg-rose-50 text-rose-800 border-rose-200';
   };
 
   const formatDisplayValue = (field: string, val: any) => {
-    if (val === undefined || val === null || val === '') return 'Không phát hiện';
+    if (val === undefined || val === null || val === '') return tx('Không phát hiện', 'Not detected');
     if (Array.isArray(val)) return val.join(', ');
     if (field === 'fundingNeed' || field === 'funding') return `${Number(val).toLocaleString()} USD/VND`;
     return String(val);
   };
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden p-6 space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-100 pb-4 gap-4">
+    <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden p-6 space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-border pb-4 gap-4">
         <div>
           <div className="flex items-center space-x-2">
-            <Sparkles className="h-5 w-5 text-emerald-600 animate-pulse" />
-            <h3 className="text-lg font-bold text-slate-900 font-display">Kết quả phân tích &amp; trích xuất dữ liệu AI</h3>
+            <Sparkles className="h-5 w-5 text-primary animate-pulse" />
+            <h3 className="text-lg font-bold text-foreground font-heading">{tx('Kết quả phân tích & trích xuất dữ liệu AI', 'AI analysis & extraction results')}</h3>
           </div>
-          <p className="text-sm text-slate-500 mt-1">
-            Chế độ trích xuất: <strong className="capitalize text-slate-700">{extractionDraft.mode === 'real' ? 'Xử lý thật' : 'Bản demo minh họa'}</strong>. Hãy xem xét và chọn lựa trước khi cập nhật vào hồ sơ nháp.
+          <p className="text-sm text-muted-foreground mt-1">
+            {tx('Chế độ trích xuất:', 'Extraction mode:')} <strong className="capitalize text-foreground">{extractionDraft.mode === 'real' ? tx('Xử lý thật', 'Live processing') : tx('Bản demo minh họa', 'Illustrative demo')}</strong>. {tx('Hãy xem xét và chọn lựa trước khi cập nhật vào hồ sơ nháp.', 'Review and pick fields before merging into your draft.')}
           </p>
         </div>
 
         <div className="flex items-center space-x-2 shrink-0">
           <button
             onClick={handleAcceptAllValid}
-            className="px-3.5 py-1.5 text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors"
+            className="px-3.5 py-1.5 text-xs font-semibold bg-primary/10 text-primary border border-primary/30 rounded-lg hover:bg-primary/15 transition-colors"
           >
-            Chấp nhận tất cả
+            {tx('Chấp nhận tất cả', 'Accept all')}
           </button>
           <button
             onClick={handleRejectAll}
-            className="px-3.5 py-1.5 text-xs font-semibold bg-slate-50 text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-100 transition-colors"
+            className="px-3.5 py-1.5 text-xs font-semibold bg-background text-muted-foreground border border-border rounded-lg hover:bg-muted transition-colors"
           >
-            Từ chối tất cả
+            {tx('Từ chối tất cả', 'Reject all')}
           </button>
         </div>
       </div>
 
       {extractionDraft.warnings.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
-          <p className="font-bold">Cảnh báo phân tích:</p>
+          <p className="font-bold">{tx('Cảnh báo phân tích:', 'Analysis warnings:')}</p>
           <ul className="list-disc list-inside mt-1 space-y-1">
             {extractionDraft.warnings.map((w, idx) => (
               <li key={idx}>{w}</li>
@@ -162,7 +166,7 @@ export default function ExtractionReview({
       <div className="space-y-4">
         {extractionDraft.fields.map((f) => {
           const isEditing = editingField === f.field;
-          const label = f.label || FIELD_LABELS[f.mappedField || ''] || FIELD_LABELS[f.field] || f.field;
+          const label = f.label || fieldLabel(f.mappedField || f.field, lang);
           const mappedKey = f.mappedField || f.field;
           const currentVal = currentProfile && mappedKey !== 'other' ? currentProfile[mappedKey as keyof StartupProfileDTO] : null;
 
@@ -171,19 +175,19 @@ export default function ExtractionReview({
               key={f.field}
               className={`border rounded-xl p-4 transition-all ${
                 f.status === 'accepted' || f.status === 'edited'
-                  ? 'border-emerald-200 bg-emerald-50/5'
+                  ? 'border-primary/30 bg-primary/5'
                   : f.status === 'rejected'
-                  ? 'border-slate-200 bg-slate-50 opacity-60'
-                  : 'border-slate-200 hover:border-slate-300'
+                  ? 'border-border bg-background opacity-60'
+                  : 'border-border hover:border-border'
               }`}
             >
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 {/* Info Area */}
                 <div className="space-y-1.5 flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">{label}</span>
+                    <span className="text-xs font-bold text-foreground uppercase tracking-wider">{label}</span>
                     {f.type && (
-                      <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-medium">
+                      <span className="px-2 py-0.5 rounded bg-muted text-muted-foreground border border-border text-[10px] font-medium">
                         {TYPE_BADGES[f.type] || f.type}
                       </span>
                     )}
@@ -192,19 +196,19 @@ export default function ExtractionReview({
                         f.confidence
                       )}`}
                     >
-                      Độ tin cậy: {Math.round(f.confidence * 100)}%
+                      {tx('Độ tin cậy:', 'Confidence:')} {Math.round(f.confidence * 100)}%
                     </span>
                     {f.status !== 'pending' && (
                       <span
                         className={`text-[10px] font-bold uppercase tracking-wider ${
                           f.status === 'accepted'
-                            ? 'text-emerald-600'
+                            ? 'text-primary'
                             : f.status === 'edited'
                             ? 'text-blue-600'
                             : 'text-rose-500'
                         }`}
                       >
-                        • {f.status === 'accepted' ? 'Đã duyệt' : f.status === 'edited' ? 'Đã sửa & duyệt' : 'Đã bỏ qua'}
+                        • {f.status === 'accepted' ? tx('Đã duyệt', 'Approved') : f.status === 'edited' ? tx('Đã sửa & duyệt', 'Edited & approved') : tx('Đã bỏ qua', 'Skipped')}
                       </span>
                     )}
                   </div>
@@ -216,25 +220,25 @@ export default function ExtractionReview({
                         type="text"
                         value={editValue}
                         onChange={(e) => setEditValue(e.target.value)}
-                        className="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        placeholder="Nhập giá trị đã chỉnh sửa..."
+                        className="flex-1 bg-card border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                        placeholder={tx('Nhập giá trị đã chỉnh sửa...', 'Enter the edited value…')}
                         autoFocus
                       />
                       <button
                         onClick={() => handleSaveEdit(f)}
-                        className="p-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+                        className="p-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
                       >
                         <Check className="h-4 w-4" />
                       </button>
                       <button
                         onClick={() => setEditingField(null)}
-                        className="p-1.5 rounded-lg bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200"
+                        className="p-1.5 rounded-lg bg-muted text-muted-foreground border border-border hover:bg-muted"
                       >
                         <X className="h-4 w-4" />
                       </button>
                     </div>
                   ) : (
-                    <div className="flex items-center space-x-2 text-slate-900 font-medium">
+                    <div className="flex items-center space-x-2 text-foreground font-medium">
                       <span className="text-sm break-words">
                         {formatDisplayValue(mappedKey, f.value)}
                       </span>
@@ -243,15 +247,15 @@ export default function ExtractionReview({
 
                   {/* Context Page & Text */}
                   {f.sourceText && (
-                    <p className="text-xs text-slate-400 italic">
-                      Nguồn trích xuất: &ldquo;{f.sourceText}&rdquo; {f.sourcePage ? `(Trang ${f.sourcePage})` : ''}
+                    <p className="text-xs text-muted-foreground italic">
+                      {tx('Nguồn trích xuất:', 'Source:')} &ldquo;{f.sourceText}&rdquo; {f.sourcePage ? tx(`(Trang ${f.sourcePage})`, `(Page ${f.sourcePage})`) : ''}
                     </p>
                   )}
 
                   {/* Comparison with current confirmed profile */}
                   {currentProfile && mappedKey !== 'other' && (
-                    <div className="flex items-center space-x-2 text-xs text-slate-500 pt-1 border-t border-slate-100 mt-2">
-                      <span className="font-semibold">Giá trị hiện tại:</span>
+                    <div className="flex items-center space-x-2 text-xs text-muted-foreground pt-1 border-t border-border mt-2">
+                      <span className="font-semibold">{tx('Giá trị hiện tại:', 'Current value:')}</span>
                       <span className="truncate max-w-xs italic">{formatDisplayValue(mappedKey, currentVal)}</span>
                     </div>
                   )}
@@ -263,23 +267,23 @@ export default function ExtractionReview({
                     <button
                       onClick={() => onUpdateFieldStatus(f.field, 'accepted')}
                       disabled={f.status === 'accepted'}
-                      title="Chấp nhận trường này"
-                      className="p-1.5 rounded-lg border border-slate-200 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                      title={tx('Chấp nhận trường này', 'Accept this field')}
+                      className="p-1.5 rounded-lg border border-border hover:bg-primary/10 hover:text-primary hover:border-primary/30 transition-colors disabled:opacity-30 disabled:pointer-events-none"
                     >
                       <Check className="h-4.5 w-4.5" />
                     </button>
                     <button
                       onClick={() => handleStartEdit(f.field, f.value)}
-                      title="Sửa và chấp nhận"
-                      className="p-1.5 rounded-lg border border-slate-200 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition-colors"
+                      title={tx('Sửa và chấp nhận', 'Edit and accept')}
+                      className="p-1.5 rounded-lg border border-border hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition-colors"
                     >
                       <Edit3 className="h-4.5 w-4.5" />
                     </button>
                     <button
                       onClick={() => onUpdateFieldStatus(f.field, 'rejected')}
                       disabled={f.status === 'rejected'}
-                      title="Bỏ qua trường này"
-                      className="p-1.5 rounded-lg border border-slate-200 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                      title={tx('Bỏ qua trường này', 'Skip this field')}
+                      className="p-1.5 rounded-lg border border-border hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 transition-colors disabled:opacity-30 disabled:pointer-events-none"
                     >
                       <Trash2 className="h-4.5 w-4.5" />
                     </button>
@@ -291,19 +295,19 @@ export default function ExtractionReview({
         })}
       </div>
 
-      <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-100">
+      <div className="flex items-center justify-end space-x-3 pt-4 border-t border-border">
         <button
           onClick={onDismissAll}
-          className="px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 border border-slate-200 rounded-lg transition-colors"
+          className="px-4 py-2.5 text-sm font-semibold text-muted-foreground hover:bg-background border border-border rounded-lg transition-colors"
         >
-          Hủy bỏ tất cả kết quả
+          {tx('Hủy bỏ tất cả kết quả', 'Discard all results')}
         </button>
         <button
           onClick={onMergeAllAccepted}
-          className="px-5 py-2.5 text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 rounded-lg shadow-sm transition-colors flex items-center space-x-2"
+          className="px-5 py-2.5 text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg shadow-sm transition-colors flex items-center space-x-2"
         >
           <ArrowRight className="h-4.5 w-4.5" />
-          <span>Áp dụng các trường đã duyệt vào hồ sơ nháp</span>
+          <span>{tx('Áp dụng các trường đã duyệt vào hồ sơ nháp', 'Apply approved fields to the draft')}</span>
         </button>
       </div>
     </div>

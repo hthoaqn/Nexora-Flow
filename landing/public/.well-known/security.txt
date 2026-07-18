@@ -1,0 +1,7 @@
+# Nexora Flow security contact (RFC 9116)
+Contact: mailto:security@nexora-flow.cloud
+Contact: mailto:admin@nexora-flow.cloud
+Preferred-Languages: en, vi
+Canonical: https://nexora-flow.cloud/.well-known/security.txt
+Policy: https://nexora-flow.cloud/privacy
+Expires: 2027-07-18T00:00:00.000Z

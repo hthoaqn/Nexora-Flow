@@ -33,7 +33,7 @@ export function StatCard({
           <p className="truncate text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
             {label}
           </p>
-          <p className="mt-1 font-heading text-2xl font-bold leading-none tracking-tight tabular-nums">
+          <p className="portal-stat-value mt-1 text-2xl leading-none">
             {numeric !== null ? Math.round(animated).toLocaleString() : value}
           </p>
           {hint ? (

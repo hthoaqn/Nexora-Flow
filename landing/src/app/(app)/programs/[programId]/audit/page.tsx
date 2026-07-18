@@ -1,5 +1,6 @@
 'use client'
 
+import { useTx } from '@/lib/tx'
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { DownloadIcon, HistoryIcon, RefreshCwIcon } from 'lucide-react'
@@ -40,6 +41,7 @@ function actionLabel(action?: string) {
 }
 
 export default function AuditPage() {
+  const { tx } = useTx()
   const { session } = useAuth()
   const params = useParams()
   const programId = String(params?.programId ?? "")
@@ -55,7 +57,7 @@ export default function AuditPage() {
       const page = await listAuditEvents(session, programId, { limit: 100 })
       setItems(page.items || [])
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Lỗi')
+      setError(e instanceof Error ? e.message : tx('Lỗi', 'Error'))
     } finally {
       setLoading(false)
     }
@@ -77,9 +79,9 @@ export default function AuditPage() {
       a.download = `export-${Date.now()}.json`
       a.click()
       URL.revokeObjectURL(url)
-      toast.success('Đã xuất')
+      toast.success(tx('Đã xuất', 'Exported'))
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Lỗi xuất')
+      toast.error(e instanceof Error ? e.message : tx('Lỗi xuất', 'Export failed'))
     } finally {
       setExporting(false)
     }
@@ -91,9 +93,9 @@ export default function AuditPage() {
   return (
     <PageShell>
       <PageHeader
-        title="Nhật ký"
-        description="Audit trail — mọi thao tác trên program được ghi lại."
-        meta={<Badge variant="secondary">{items.length} sự kiện</Badge>}
+        title={tx('Nhật ký')}
+        description={tx('Audit trail — mọi thao tác trên program được ghi lại.', 'Audit trail — every program action is recorded.')}
+        meta={<Badge variant="secondary">{items.length} {tx('sự kiện', 'events')}</Badge>}
         actions={
           <>
             <Button size="sm" disabled={exporting} onClick={() => void onExport()}>
@@ -102,7 +104,7 @@ export default function AuditPage() {
               ) : (
                 <DownloadIcon data-icon="inline-start" />
               )}
-              Xuất JSON
+              {tx('Xuất JSON', 'Export JSON')}
             </Button>
             <Button variant="outline" size="icon-sm" onClick={load}>
               <RefreshCwIcon />
@@ -112,11 +114,11 @@ export default function AuditPage() {
       />
 
       <StatGrid>
-        <StatCard label="Sự kiện" value={items.length} icon={HistoryIcon} />
-        <StatCard label="Loại action" value={uniqueActions} />
+        <StatCard label={tx('Sự kiện', 'Events')} value={items.length} icon={HistoryIcon} />
+        <StatCard label={tx('Loại action', 'Action types')} value={uniqueActions} />
         <StatCard label="Actors" value={uniqueActors} />
         <StatCard
-          label="Mới nhất"
+          label={tx('Mới nhất', 'Latest')}
           value={
             items[0]?.createdAt
               ? new Date(items[0].createdAt).toLocaleDateString('vi-VN')
@@ -131,23 +133,23 @@ export default function AuditPage() {
       ) : items.length === 0 ? (
         <EmptyState
           icon={<HistoryIcon />}
-          title="Chưa có hoạt động"
-          description="Upload hồ sơ, chấm điểm hoặc sửa program sẽ xuất hiện tại đây."
+          title={tx('Chưa có hoạt động', 'No activity yet')}
+          description={tx('Upload hồ sơ, chấm điểm hoặc sửa program sẽ xuất hiện tại đây.', 'Uploads, scoring runs, and program edits will appear here.')}
         />
       ) : (
         <DataPanel
           footer={
             <>
               <span>{items.length} events</span>
-              <span>Mới → cũ</span>
+              <span>{tx('Mới → cũ', 'Newest → oldest')}</span>
             </>
           }
         >
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[160px]">Thời gian</TableHead>
-                <TableHead>Hoạt động</TableHead>
+                <TableHead className="w-[160px]">{tx('Thời gian', 'Time')}</TableHead>
+                <TableHead>{tx('Hoạt động', 'Activity')}</TableHead>
                 <TableHead className="hidden sm:table-cell">Action key</TableHead>
                 <TableHead className="hidden md:table-cell">Actor</TableHead>
               </TableRow>
@@ -160,7 +162,7 @@ export default function AuditPage() {
                   </TableCell>
                   <TableCell>
                     <Badge variant="secondary" className="text-[10px]">
-                      {actionLabel(ev.action)}
+                      {tx(actionLabel(ev.action))}
                     </Badge>
                   </TableCell>
                   <TableCell className="hidden font-mono text-[11px] text-muted-foreground sm:table-cell">

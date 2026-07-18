@@ -1,547 +1,642 @@
 // @ts-nocheck
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
+'use client'
 
-import React, { useEffect, useState } from 'react';
-import { api } from '../api';
-import { useStartupStore } from '../store/useStartupStore';
-import { MatchResultDTO } from '../../types';
-import { toast } from 'sonner';
+import React, { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { api } from '../api'
+import { useStartupStore } from '../store/useStartupStore'
+import { usePortalI18n } from '../i18n'
+import { toast } from 'sonner'
+import { isInvestorPipelineEnabled } from '@/investor/flags'
 import {
   Sparkles,
   Search,
-  Filter,
-  CheckCircle,
-  HelpCircle,
-  TrendingUp,
   Award,
-  Layers,
-  ArrowUpRight,
-  User,
-  ExternalLink,
+  CheckCircle,
   MessageSquare,
   Send,
-  X,
-  Plus,
-} from 'lucide-react';
+  HelpCircle,
+  RefreshCw,
+  GitCompareArrows,
+  Handshake,
+} from 'lucide-react'
+import {
+  PortalHero,
+  PortalSection,
+  PortalEmpty,
+  SoftButton,
+  DemoBadge,
+  PortalProgress,
+} from '../components/PortalUI'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/utils'
+
+const SCORE_KEYS = [
+  { key: 'industry', w: '25%' },
+  { key: 'technology', w: '15%' },
+  { key: 'stage', w: '15%' },
+  { key: 'partnership', w: '15%' },
+  { key: 'funding', w: '10%' },
+  { key: 'market', w: '10%' },
+  { key: 'capability', w: '10%' },
+]
+
+function scorePct(m, key) {
+  const b = m.scoreBreakdown || m.breakdown || {}
+  let raw = Number(b[key] ?? 0)
+  if (!Number.isFinite(raw)) return 0
+  if (raw > 0 && raw <= 1) raw *= 100
+  while (raw > 100) raw /= 100
+  return Math.max(0, Math.min(100, Math.round(raw)))
+}
 
 export default function Matches() {
-  const { confirmedProfile, isDirty } = useStartupStore();
+  const navigate = useNavigate()
+  const { confirmedProfile, isDirty } = useStartupStore()
+  const { t, lang } = usePortalI18n()
 
-  const [matches, setMatches] = useState<MatchResultDTO[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [matches, setMatches] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [orgType, setOrgType] = useState('')
+  const [partnershipType, setPartnershipType] = useState('')
+  const [sortBy, setSortBy] = useState('score')
+  const [minScore, setMinScore] = useState(0)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [connectingMatch, setConnectingMatch] = useState(null)
+  const [introMessage, setIntroMessage] = useState('')
+  const [sendingConnection, setSendingConnection] = useState(false)
+  const [recalculating, setRecalculating] = useState(false)
+  /** partnerId → connection status (prevents re-send spam) */
+  const [connectedByPartner, setConnectedByPartner] = useState({})
 
-  // Filters state
-  const [search, setSearch] = useState('');
-  const [orgType, setOrgType] = useState('');
-  const [partnershipType, setPartnershipType] = useState('');
-  const [sortBy, setSortBy] = useState<'score' | 'newest' | 'name' | 'employees' | 'growth'>('score');
-  const [minScore, setMinScore] = useState<number>(0);
-  const [currentPage, setCurrentPage] = useState(1);
+  const str = (v) => String(v ?? '').toLowerCase()
 
-  // Connection drawer modal state
-  const [connectingMatch, setConnectingMatch] = useState<MatchResultDTO | null>(null);
-  const [introMessage, setIntroMessage] = useState('');
-  const [sendingConnection, setSendingConnection] = useState(false);
-  const [recalculating, setRecalculating] = useState(false);
+  /** Dedupe match rows by partner id (re-run match can pile duplicates) */
+  const dedupeMatches = (list) => {
+    const map = new Map()
+    for (const m of list || []) {
+      const pid = m?.partner?.id || m?.partnerId || m?.id
+      if (!pid) continue
+      const prev = map.get(pid)
+      if (!prev || (Number(m.totalScore) || 0) >= (Number(prev.totalScore) || 0)) {
+        map.set(pid, m)
+      }
+    }
+    return Array.from(map.values())
+  }
+
+  const fetchExistingConnections = async () => {
+    try {
+      const res = await api.get('/startup/connections')
+      if (!res.data?.success) return
+      const raw = res.data.data
+      const list = Array.isArray(raw) ? raw : raw?.items || []
+      const map = {}
+      for (const c of list) {
+        const pid = String(c.partnerId || c.partner?.id || '')
+        if (!pid) continue
+        // Prefer accepted over pending
+        const st = String(c.status || 'pending').toLowerCase()
+        if (!map[pid] || st === 'accepted') map[pid] = st
+      }
+      setConnectedByPartner(map)
+    } catch {
+      /* ignore */
+    }
+  }
 
   const fetchMatches = async () => {
-    setLoading(true);
+    setLoading(true)
     try {
-      const res = await api.get('/startup/matches');
-      if (res.data && res.data.success) {
-        setMatches(res.data.data);
+      const res = await api.get('/startup/matches')
+      if (res.data?.success) {
+        setMatches(dedupeMatches(Array.isArray(res.data.data) ? res.data.data : []))
       }
     } catch (e) {
-      console.error(e);
+      console.error(e)
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
   const handleRecalculateMatches = async () => {
     if (!confirmedProfile) {
-      toast.error('Bạn cần xác nhận hồ sơ trước khi chạy so khớp.');
-      return;
+      toast.error(t.matches.emptyDesc)
+      return
     }
-    setRecalculating(true);
-    const toastId = toast.loading('Đang chạy thuật toán so khớp đối tác...');
+    setRecalculating(true)
+    const toastId = toast.loading(t.matches.running)
     try {
-      const res = await api.post('/startup/matches/run', { confirmedProfile });
-      if (res.data && res.data.success) {
-        toast.success('Đã tính toán lại so khớp thành công!');
-        setMatches(res.data.data);
+      const res = await api.post('/startup/matches/run', { confirmedProfile })
+      if (res.data?.success) {
+        toast.success(t.matches.run, { id: toastId })
+        setMatches(dedupeMatches(Array.isArray(res.data.data) ? res.data.data : []))
       }
-    } catch (e: any) {
-      console.error(e);
-      const errData = e.response?.data;
-      const errorCode = errData?.error?.code;
-      const errorMessage = errData?.message;
-      const errorDetails = errData?.error?.details;
-
-      if (errorCode === 'PROFILE_NOT_CONFIRMED') {
-        toast.error('Hồ sơ chưa xác nhận: Bạn cần thiết lập thông tin và bấm "Xác nhận và tạo hồ sơ" trước khi chạy so khớp.');
-      } else if (errorCode === 'PROFILE_INCOMPLETE_FOR_MATCHING') {
-        toast.error(errorMessage || errorDetails || 'Hồ sơ còn thiếu một số trường thông tin quan trọng bắt buộc để so khớp.');
-      } else if (errorCode === 'NO_ACTIVE_PARTNERS') {
-        toast.error('Hiện không có đối tác doanh nghiệp hay quỹ đầu tư nào đang hoạt động để thực hiện so khớp.');
-      } else {
-        toast.error(errorMessage || 'Hệ thống gặp lỗi không mong muốn khi tính toán so khớp đối tác.');
-      }
+    } catch (e) {
+      const code = e?.response?.data?.error?.code || ''
+      const msg =
+        code === 'PROFILE_NOT_CONFIRMED'
+          ? lang === 'en'
+            ? 'Confirm your official profile first (Profile page).'
+            : 'Hãy xác nhận hồ sơ chính thức trước (mục Hồ sơ).'
+          : e?.response?.data?.message || t.matches.emptyTitle
+      toast.error(msg, { id: toastId })
     } finally {
-      setRecalculating(false);
-      toast.dismiss(toastId);
+      setRecalculating(false)
     }
-  };
+  }
 
   useEffect(() => {
-    fetchMatches();
-  }, []);
+    fetchMatches()
+    fetchExistingConnections()
+  }, [])
 
-  const handleOpenConnect = (m: MatchResultDTO) => {
-    setConnectingMatch(m);
+  const handleOpenConnect = (m) => {
+    const partnerId = m.partner?.id || m.partnerId
+    const existing = partnerId ? connectedByPartner[String(partnerId)] : null
+    if (existing) {
+      toast.message(
+        lang === 'en'
+          ? `Already connected (${existing}). Open Connections.`
+          : `Đã kết nối rồi (${existing === 'accepted' ? 'đã chấp nhận' : 'đang chờ'}). Mở mục Kết nối.`,
+      )
+      navigate('/connections')
+      return
+    }
+    setConnectingMatch(m)
+    const org = m.partner?.organizationName || (lang === 'en' ? 'partner' : 'đối tác')
+    const name = confirmedProfile?.startupName || (lang === 'en' ? 'a startup' : 'một startup')
+    const score = m.totalScore ?? 0
     setIntroMessage(
-      `Kính chào ban lãnh đạo ${m.partner.organizationName},\n\nChúng tôi là ${confirmedProfile?.startupName || 'Startup'}, nhận thấy có sự trùng khớp rất lớn (${m.totalScore}%) về mục tiêu và lĩnh vực hoạt động trong chương trình Deal-Flow Matchmaker.\n\nChúng tôi rất mong muốn được thảo luận chi tiết về cơ hội hợp tác.`
-    );
-  };
+      lang === 'en'
+        ? `Hi ${org},\n\nWe are ${name} — fit score ${score}% on Nexora Flow.\n\nWe would love to explore a partnership.`
+        : `Xin chào ${org},\n\nChúng tôi là ${name} — độ khớp ${score}% trên Nexora Flow.\n\nMong được trao đổi cơ hội hợp tác.`,
+    )
+  }
 
   const handleSendConnection = async () => {
-    if (!connectingMatch) return;
+    if (!connectingMatch || sendingConnection) return
     if (!introMessage.trim()) {
-      toast.error('Vui lòng soạn thảo nội dung tin nhắn giới thiệu.');
-      return;
+      toast.error(t.matches.message)
+      return
     }
-
-    setSendingConnection(true);
+    const partnerId = connectingMatch.partner?.id || connectingMatch.partnerId
+    if (!partnerId) return
+    if (connectedByPartner[String(partnerId)]) {
+      toast.message(
+        lang === 'en'
+          ? 'Already sent to this partner.'
+          : 'Đã gửi lời giới thiệu tới đối tác này rồi.',
+      )
+      setConnectingMatch(null)
+      navigate('/connections')
+      return
+    }
+    setSendingConnection(true)
     try {
       const res = await api.post('/startup/connections', {
-        partnerId: connectingMatch.partner.id,
+        partnerId,
         matchId: connectingMatch.id,
         matchScore: connectingMatch.totalScore,
         message: introMessage,
-      });
-
-      if (res.data && res.data.success) {
-        if (connectingMatch.partner.isDemo) {
-          toast.success(`Yêu cầu kết nối thử nghiệm đã được ghi nhận thành công trong môi trường mô phỏng tới ${connectingMatch.partner.organizationName}!`);
-        } else {
-          toast.success(`Đã gửi yêu cầu kết nối thành công tới ${connectingMatch.partner.organizationName}!`);
-        }
-        setConnectingMatch(null);
-        // Refresh matches info
-        fetchMatches();
+      })
+      if (res.data?.success) {
+        toast.success(t.matches.send)
+        setConnectedByPartner((prev) => ({
+          ...prev,
+          [String(partnerId)]: 'pending',
+        }))
+        setConnectingMatch(null)
+        fetchMatches()
+        fetchExistingConnections()
       }
     } catch (e) {
-      console.error(e);
+      const code = e?.response?.data?.error?.code || ''
+      if (code === 'DUPLICATE_CONNECTION' || /already|đã tồn tại|duplicate/i.test(String(e?.response?.data?.message || ''))) {
+        toast.message(
+          lang === 'en'
+            ? 'Connection already exists for this partner.'
+            : 'Đã có kết nối với đối tác này.',
+        )
+        setConnectedByPartner((prev) => ({
+          ...prev,
+          [String(partnerId)]: 'pending',
+        }))
+        setConnectingMatch(null)
+        navigate('/connections')
+      } else {
+        toast.error(
+          e?.response?.data?.message ||
+            (lang === 'en' ? 'Could not send introduction' : 'Không gửi được lời giới thiệu'),
+        )
+      }
     } finally {
-      setSendingConnection(false);
+      setSendingConnection(false)
     }
-  };
+  }
 
-  // Filter local results
-  const filteredMatches = matches.filter((m) => {
-    if (!m.partner) return false;
-    const matchesSearch =
-      m.partner.organizationName.toLowerCase().includes(search.toLowerCase()) ||
-      (m.partner.description || '').toLowerCase().includes(search.toLowerCase()) ||
-      (m.partner.interestedIndustries || []).some((i) => i.toLowerCase().includes(search.toLowerCase())) ||
-      (m.partner.interestedTechnologies || []).some((t) => t.toLowerCase().includes(search.toLowerCase()));
+  const filtered = matches.filter((m) => {
+    if (!m?.partner) return false
+    const p = m.partner
+    const q = str(search)
+    const okSearch =
+      !q ||
+      str(p.organizationName).includes(q) ||
+      str(p.description).includes(q) ||
+      (p.interestedIndustries || []).some((i) => str(i).includes(q)) ||
+      (p.interestedTechnologies || []).some((x) => str(x).includes(q))
+    const okType = !orgType || p.organizationType === orgType
+    const okPart =
+      !partnershipType || (p.partnershipTypes || []).includes(partnershipType)
+    return okSearch && okType && okPart && (Number(m.totalScore) || 0) >= minScore
+  })
 
-    const matchesType = !orgType || m.partner.organizationType === orgType;
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortBy === 'score') return (Number(b.totalScore) || 0) - (Number(a.totalScore) || 0)
+    if (sortBy === 'name')
+      return String(a.partner?.organizationName || '').localeCompare(
+        String(b.partner?.organizationName || ''),
+      )
+    return 0
+  })
 
-    const matchesPartnership =
-      !partnershipType || (m.partner.partnershipTypes || []).includes(partnershipType);
+  const pageSize = 6
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize))
+  const page = sorted.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
-    const matchesMinScore = m.totalScore >= minScore;
+  const scoreTone = (score) => {
+    if (score >= 80) return 'border-primary/35 bg-primary/12 text-primary'
+    if (score >= 60)
+      return 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+    return 'border-border bg-muted text-muted-foreground'
+  }
 
-    return matchesSearch && matchesType && matchesPartnership && matchesMinScore;
-  });
-
-  // Sort results
-  const sortedMatches = [...filteredMatches].sort((a, b) => {
-    if (sortBy === 'score') {
-      return b.totalScore - a.totalScore;
-    }
-    if (sortBy === 'newest') {
-      const dateA = new Date(a.partner.createdAt || 0).getTime();
-      const dateB = new Date(b.partner.createdAt || 0).getTime();
-      return dateB - dateA;
-    }
-    if (sortBy === 'name') {
-      return a.partner.organizationName.localeCompare(b.partner.organizationName);
-    }
-    if (sortBy === 'employees') {
-      return (b.partner.employeeCount || 0) - (a.partner.employeeCount || 0);
-    }
-    if (sortBy === 'growth') {
-      return (b.partner.growthRate || 0) - (a.partner.growthRate || 0);
-    }
-    return 0;
-  });
-
-  // Paginate results
-  const pageSize = 5;
-  const totalItems = sortedMatches.length;
-  const totalPages = Math.ceil(totalItems / pageSize);
-  const paginatedMatches = sortedMatches.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-
-  const getScoreColor = (score: number) => {
-    if (score >= 80) return 'text-emerald-600 bg-emerald-50 border-emerald-200';
-    if (score >= 60) return 'text-amber-600 bg-amber-50 border-amber-200';
-    return 'text-slate-600 bg-slate-50 border-slate-200';
-  };
+  const dimLabel = (key) => t.matches.dims[key] || key
 
   return (
-    <div className="space-y-8">
-      {/* Header and Sync Alerts */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-200 pb-4 gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-900 font-display flex items-center space-x-2">
-            <Sparkles className="h-6 w-6 text-emerald-600 animate-pulse" />
-            <span>Đối tác so khớp phù hợp nhất</span>
-          </h2>
-          <p className="text-sm text-slate-500 mt-1">
-            Danh sách đối tác doanh nghiệp và quỹ đầu tư phù hợp, sắp xếp theo điểm số tương thích
-          </p>
-        </div>
+    <div className="space-y-5">
+      <PortalHero
+        eyebrow={
+          <>
+            <Sparkles className="size-3" />
+            {t.matches.title}
+          </>
+        }
+        title={t.matches.title}
+        description={t.matches.lead}
+        actions={
+          <>
+            {isInvestorPipelineEnabled() ? (
+              <SoftButton
+                size="sm"
+                variant="outline"
+                onClick={() => navigate('/investor-matches')}
+                className="rounded-full"
+              >
+                <Handshake className="size-3.5" />
+                {t.matches.openInvestorMatch}
+              </SoftButton>
+            ) : null}
+            <SoftButton
+              size="sm"
+              variant="outline"
+              onClick={fetchMatches}
+              className="rounded-full"
+            >
+              <RefreshCw className="size-3.5" />
+              {t.matches.refresh}
+            </SoftButton>
+            <SoftButton
+              size="sm"
+              disabled={recalculating}
+              onClick={handleRecalculateMatches}
+              className="rounded-full"
+            >
+              <Sparkles className="size-3.5" />
+              {recalculating ? t.matches.running : t.matches.run}
+            </SoftButton>
+          </>
+        }
+      />
 
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={handleRecalculateMatches}
-            disabled={recalculating}
-            className="px-4 py-2 text-sm font-bold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-sm transition-colors cursor-pointer disabled:bg-slate-200 disabled:text-slate-400"
-          >
-            {recalculating ? 'Đang so khớp...' : 'Cập nhật so khớp'}
-          </button>
-          <button
-            onClick={fetchMatches}
-            className="px-4 py-2 text-sm font-semibold border border-slate-200 bg-white text-slate-700 rounded-lg hover:bg-slate-50 cursor-pointer"
-          >
-            Làm mới danh sách
-          </button>
-        </div>
-      </div>
+      {isDirty ? (
+        <Alert className="border-amber-500/35 bg-amber-500/10">
+          <AlertTitle>{t.matches.dirtyTitle}</AlertTitle>
+          <AlertDescription>{t.matches.dirtyBody}</AlertDescription>
+        </Alert>
+      ) : null}
 
-      {isDirty && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
-          <strong>Cảnh báo bộ lọc:</strong> Bạn có thay đổi chưa xác nhận ở trang hồ sơ. Kết quả so khớp hiện tại đang sử dụng thông tin từ hồ sơ chính thức lưu trong database. Vui lòng bấm lưu hồ sơ để cập nhật kết quả so khớp chính xác nhất.
-        </div>
-      )}
+      <Alert className="border-primary/25 bg-primary/5">
+        <GitCompareArrows className="size-4 text-primary" />
+        <AlertTitle>{t.matches.twoWayTitle}</AlertTitle>
+        <AlertDescription className="text-xs leading-relaxed">
+          {t.matches.twoWayBody}
+        </AlertDescription>
+      </Alert>
 
-      {/* Search and filter toolbar */}
-      <div className="space-y-4 bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="relative">
-            <Search className="absolute left-3.5 top-3 h-4.5 w-4.5 text-slate-400" />
-            <input
-              type="text"
+      <div className="portal-card p-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="relative sm:col-span-2 lg:col-span-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
               value={search}
-              onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
-              className="w-full bg-white border border-slate-300 rounded-lg pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 placeholder-slate-400"
-              placeholder="Tìm theo tên đối tác, lĩnh vực, công nghệ..."
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setCurrentPage(1)
+              }}
+              className="pl-9"
+              placeholder={t.matches.searchPh}
             />
           </div>
-
-          <div>
-            <select
-              value={orgType}
-              onChange={(e) => { setOrgType(e.target.value); setCurrentPage(1); }}
-              className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-600 shadow-sm"
-            >
-              <option value="">Tất cả loại hình đối tác</option>
-              <option value="corporation">Doanh nghiệp lớn</option>
-              <option value="investment_fund">Quỹ Đầu tư mạo hiểm (VC)</option>
-              <option value="innovation_organization">Tổ chức đổi mới sáng tạo</option>
-              <option value="research_institution">Viện nghiên cứu / Trường ĐH</option>
-            </select>
-          </div>
-
-          <div>
-            <select
-              value={partnershipType}
-              onChange={(e) => { setPartnershipType(e.target.value); setCurrentPage(1); }}
-              className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-600 shadow-sm"
-            >
-              <option value="">Tất cả hình thức hợp tác</option>
-              <option value="investment">Hỗ trợ đầu tư vốn</option>
-              <option value="pilot">Chương trình thí điểm (Pilot)</option>
-              <option value="distribution">Hợp tác phân phối kênh bán</option>
-              <option value="technology_partnership">Hợp tác công nghệ</option>
-              <option value="customer_acquisition">Tiếp cận khách hàng mới</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-slate-100 pt-3">
-          <div>
-            <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Sắp xếp kết quả</label>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
-              className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-600 shadow-sm"
-            >
-              <option value="score">Điểm phù hợp cao nhất</option>
-              <option value="newest">Mới nhất</option>
-              <option value="name">Tên A-Z</option>
-              <option value="employees">Quy mô lớn nhất (Nhân sự)</option>
-              <option value="growth">Tăng trưởng cao nhất (%)</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Điểm matching tối thiểu</label>
-            <select
-              value={minScore}
-              onChange={(e) => { setMinScore(Number(e.target.value)); setCurrentPage(1); }}
-              className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-600 shadow-sm"
-            >
-              <option value={0}>Tất cả điểm số</option>
-              <option value={20}>Từ 20 điểm trở lên</option>
-              <option value={40}>Từ 40 điểm trở lên</option>
-              <option value={60}>Từ 60 điểm trở lên (Phù hợp)</option>
-              <option value={80}>Từ 80 điểm trở lên (Rất phù hợp)</option>
-            </select>
-          </div>
-
-          <div className="flex items-end justify-end text-xs text-slate-400 self-center pb-1">
-            Hiển thị <strong className="text-slate-700 mx-1">{totalItems}</strong> kết quả so khớp
-          </div>
+          <select
+            value={orgType}
+            onChange={(e) => {
+              setOrgType(e.target.value)
+              setCurrentPage(1)
+            }}
+            className="h-8 rounded-lg border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          >
+            <option value="">{t.matches.allTypes}</option>
+            <option value="corporation">
+              {lang === 'en' ? 'Corporate' : 'Doanh nghiệp'}
+            </option>
+            <option value="investment_fund">
+              {lang === 'en' ? 'VC / Fund' : 'Quỹ đầu tư'}
+            </option>
+            <option value="incubator">
+              {lang === 'en' ? 'Incubator' : 'Vườn ươm'}
+            </option>
+            <option value="innovation_organization">
+              {lang === 'en' ? 'Innovation' : 'Tổ chức đổi mới'}
+            </option>
+          </select>
+          <select
+            value={partnershipType}
+            onChange={(e) => {
+              setPartnershipType(e.target.value)
+              setCurrentPage(1)
+            }}
+            className="h-8 rounded-lg border border-input bg-transparent px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          >
+            <option value="">{t.matches.allPartnerships}</option>
+            <option value="investment">
+              {lang === 'en' ? 'Investment' : 'Đầu tư'}
+            </option>
+            <option value="pilot">
+              {lang === 'en' ? 'Pilot' : 'Thử nghiệm'}
+            </option>
+            <option value="technology_partnership">
+              {lang === 'en' ? 'Tech partnership' : 'Hợp tác công nghệ'}
+            </option>
+          </select>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            className="h-8 rounded-lg border border-input bg-transparent px-3 text-sm outline-none dark:bg-input/30"
+          >
+            <option value="score">{t.matches.sortScore}</option>
+            <option value="name">{t.matches.sortName}</option>
+          </select>
+          <select
+            value={minScore}
+            onChange={(e) => {
+              setMinScore(Number(e.target.value))
+              setCurrentPage(1)
+            }}
+            className="h-8 rounded-lg border border-input bg-transparent px-3 text-sm outline-none dark:bg-input/30"
+          >
+            <option value={0}>{t.matches.minScore}</option>
+            <option value={40}>≥ 40</option>
+            <option value={60}>≥ 60</option>
+            <option value={80}>≥ 80</option>
+          </select>
+          <p className="flex items-center text-xs text-muted-foreground sm:justify-end">
+            <span className="font-semibold text-foreground tabular-nums">{sorted.length}</span>
+            &nbsp;{t.matches.results}
+          </p>
         </div>
       </div>
 
-      {/* Loading list */}
       {loading ? (
-        <div className="space-y-4">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-44 bg-slate-200 rounded-xl animate-pulse"></div>
+        <div className="grid gap-4 md:grid-cols-2">
+          {[1, 2, 3, 4].map((i) => (
+            <Skeleton key={i} className="h-56 rounded-2xl" />
           ))}
         </div>
-      ) : paginatedMatches.length > 0 ? (
-        <div className="space-y-6">
-          {paginatedMatches.map((m) => {
-            const matchedTech = (m.partner?.interestedTechnologies || []).filter(t => 
-              (confirmedProfile?.technologies || []).some(st => st.toLowerCase().includes(t.toLowerCase()) || t.toLowerCase().includes(st.toLowerCase()))
-            );
-            const matchedPart = (m.partner?.partnershipTypes || []).filter(p => 
-              (confirmedProfile?.partnershipNeeds || []).some(sp => sp.toLowerCase() === p.toLowerCase())
-            );
-            return (
-              <div
-                key={m.partner?.id || m.id}
-                className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden p-6 hover:border-slate-300 transition-all space-y-6"
-              >
-              {/* Profile Card Header */}
-              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                <div className="space-y-2">
-                  <div className="flex items-center space-x-3">
-                    <h3 className="text-lg font-bold text-slate-900 font-display flex items-center gap-2">
-                      <span>{m.partner.organizationName}</span>
-                      {(m.partner.isDemo || m.partnerIsDemo || m.partner_is_demo) && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                          Dữ liệu mô phỏng
-                        </span>
+      ) : page.length > 0 ? (
+        <>
+          <div className="grid gap-4 md:grid-cols-2">
+            {page.map((m) => {
+              const partner = m.partner || {}
+              const score = Number(m.totalScore) || 0
+              const matchedTech = (partner.interestedTechnologies || []).filter(
+                (x) =>
+                  x != null &&
+                  (confirmedProfile?.technologies || []).some((st) => {
+                    if (st == null) return false
+                    return str(st).includes(str(x)) || str(x).includes(str(st))
+                  }),
+              )
+              const isDemo = partner.isDemo || m.partnerIsDemo
+
+              return (
+                <div key={partner.id || m.id} className="portal-card flex flex-col">
+                  <div className="flex items-start justify-between gap-3 border-b border-border/70 px-5 py-4">
+                    <div className="min-w-0 space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <h3 className="font-heading text-base font-semibold">
+                          {partner.organizationName || '—'}
+                        </h3>
+                        {isDemo ? <DemoBadge label={t.demo} /> : null}
+                      </div>
+                      <p className="line-clamp-2 text-xs text-muted-foreground">
+                        {partner.description || '—'}
+                      </p>
+                      <div className="flex flex-wrap gap-1 pt-0.5">
+                        <Badge variant="secondary" className="capitalize">
+                          {String(partner.organizationType || '—').replace(/_/g, ' ')}
+                        </Badge>
+                        {(partner.interestedIndustries || []).slice(0, 3).map((ind) => (
+                          <Badge key={String(ind)} variant="outline" className="font-normal">
+                            {ind}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                    <div
+                      className={cn(
+                        'inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-2 font-heading text-sm font-semibold tabular-nums',
+                        scoreTone(score),
                       )}
-                    </h3>
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                      {m.partner.organizationType.replace('_', ' ')}
-                    </span>
+                    >
+                      <Award className="size-4" />
+                      {score}
+                    </div>
                   </div>
 
-                  <p className="text-sm text-slate-500">{m.partner.description}</p>
-
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    <span className="font-semibold text-slate-400 uppercase tracking-wider self-center mr-1">
-                      Lĩnh vực cần tìm:
-                    </span>
-                    {(m.partner.interestedIndustries || []).map((ind) => (
-                      <span key={ind} className="bg-slate-50 text-slate-600 px-2.5 py-1 rounded-lg border border-slate-200">
-                        {ind}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Score breakdown metrics badge */}
-                <div className="text-right shrink-0">
-                  <div className={`inline-flex items-center space-x-1 px-4 py-2 rounded-xl border font-bold text-lg font-display ${getScoreColor(m.totalScore)}`}>
-                    <Award className="h-5 w-5" />
-                    <span>{m.totalScore} / 100 điểm</span>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-1">Độ tương thích hệ thống</p>
-                </div>
-              </div>
-
-              {/* Expansion Grid: Breakdown of Weights */}
-              <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4">
-                <div className="text-center space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider">
-                    Lĩnh vực (25%)
-                  </span>
-                  <span className="text-sm font-bold text-slate-900">{Math.round(((m.scoreBreakdown || m.breakdown || {}).industry || 0) * 100)}/100</span>
-                </div>
-
-                <div className="text-center space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider">
-                    Công nghệ (15%)
-                  </span>
-                  <span className="text-sm font-bold text-slate-900">{Math.round(((m.scoreBreakdown || m.breakdown || {}).technology || 0) * 100)}/100</span>
-                </div>
-
-                <div className="text-center space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider">
-                    Giai đoạn (15%)
-                  </span>
-                  <span className="text-sm font-bold text-slate-900">{Math.round(((m.scoreBreakdown || m.breakdown || {}).stage || 0) * 100)}/100</span>
-                </div>
-
-                <div className="text-center space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider">
-                    Hợp tác (15%)
-                  </span>
-                  <span className="text-sm font-bold text-slate-900">{Math.round(((m.scoreBreakdown || m.breakdown || {}).partnership || 0) * 100)}/100</span>
-                </div>
-
-                <div className="text-center space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider">
-                    Gọi vốn (10%)
-                  </span>
-                  <span className="text-sm font-bold text-slate-900">{Math.round(((m.scoreBreakdown || m.breakdown || {}).funding || 0) * 100)}/100</span>
-                </div>
-
-                <div className="text-center space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider">
-                    Thị trường (10%)
-                  </span>
-                  <span className="text-sm font-bold text-slate-900">{Math.round(((m.scoreBreakdown || m.breakdown || {}).market || 0) * 100)}/100</span>
-                </div>
-
-                <div className="text-center space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider">
-                    Năng lực (10%)
-                  </span>
-                  <span className="text-sm font-bold text-slate-900">{Math.round(((m.scoreBreakdown || m.breakdown || {}).capability || 0) * 100)}/100</span>
-                </div>
-              </div>
-
-              {/* Match Highlights / Common Items */}
-              <div className="flex flex-wrap items-center justify-between border-t border-slate-100 pt-4 gap-4">
-                <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
-                  <div className="flex items-center space-x-1">
-                    <CheckCircle className="h-4 w-4 text-emerald-500" />
-                    <span>Trùng công nghệ: <strong>{matchedTech.join(', ') || 'Không trùng'}</strong></span>
+                  <div className="space-y-3 px-5 py-4">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-3">
+                      {SCORE_KEYS.map(({ key, w }) => {
+                        const pct = scorePct(m, key)
+                        return (
+                          <div key={key} className="min-w-0 space-y-1">
+                            <div className="flex items-center justify-between gap-1 text-[10px]">
+                              <span className="truncate text-muted-foreground">
+                                {dimLabel(key)}
+                                <span className="ml-0.5 opacity-60">({w})</span>
+                              </span>
+                              <span className="tabular-nums font-medium text-foreground">
+                                {pct}
+                              </span>
+                            </div>
+                            <PortalProgress value={pct} />
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      <CheckCircle className="mr-1 inline size-3 text-primary" />
+                      {t.matches.tech}:{' '}
+                      <strong className="text-foreground">
+                        {matchedTech.join(', ') || '—'}
+                      </strong>
+                    </p>
                   </div>
 
-                  <div className="flex items-center space-x-1">
-                    <CheckCircle className="h-4 w-4 text-emerald-500" />
-                    <span>Hình thức: <strong>{matchedPart.join(', ') || 'Không trùng'}</strong></span>
+                  <div className="mt-auto flex justify-end border-t border-border/70 px-5 py-3">
+                    {(() => {
+                      const pid = String(partner.id || m.partnerId || '')
+                      const st = pid ? connectedByPartner[pid] : null
+                      if (st) {
+                        return (
+                          <SoftButton
+                            size="sm"
+                            variant="outline"
+                            className="rounded-full"
+                            onClick={() => navigate('/connections')}
+                          >
+                            <CheckCircle className="size-3.5" />
+                            {st === 'accepted'
+                              ? lang === 'en'
+                                ? 'Connected'
+                                : 'Đã kết nối'
+                              : lang === 'en'
+                                ? 'Pending'
+                                : 'Đang chờ'}
+                          </SoftButton>
+                        )
+                      }
+                      return (
+                        <SoftButton
+                          size="sm"
+                          className="rounded-full"
+                          onClick={() => handleOpenConnect(m)}
+                        >
+                          <MessageSquare className="size-3.5" />
+                          {t.matches.connect}
+                        </SoftButton>
+                      )
+                    })()}
                   </div>
                 </div>
+              )
+            })}
+          </div>
 
-                {/* Send request action */}
-                <button
-                  onClick={() => handleOpenConnect(m)}
-                  className="inline-flex items-center space-x-1.5 px-4.5 py-2.5 bg-emerald-600 text-white font-bold text-xs rounded-lg hover:bg-emerald-700 shadow-sm cursor-pointer transition-colors"
-                >
-                  <MessageSquare className="h-4 w-4" />
-                  <span>Gửi yêu cầu kết nối</span>
-                </button>
-              </div>
-            </div>
-          )})}
-          
-          {/* Pagination Controls */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between border-t border-slate-200 pt-4 mt-6">
-              <button
+          {totalPages > 1 ? (
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <Button
+                size="sm"
+                variant="outline"
+                className="rounded-full"
                 disabled={currentPage === 1}
-                onClick={() => setCurrentPage(currentPage - 1)}
-                className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                onClick={() => setCurrentPage((p) => p - 1)}
               >
-                Trang trước
-              </button>
-              <div className="text-xs text-slate-500">
-                Trang <strong className="text-slate-800">{currentPage}</strong> / {totalPages}
-              </div>
-              <button
+                {t.prev}
+              </Button>
+              <span className="tabular-nums">
+                {t.page} {currentPage}
+                {t.of}
+                {totalPages}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                className="rounded-full"
                 disabled={currentPage === totalPages}
-                onClick={() => setCurrentPage(currentPage + 1)}
-                className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                onClick={() => setCurrentPage((p) => p + 1)}
               >
-                Trang sau
-              </button>
+                {t.next}
+              </Button>
             </div>
-          )}
-        </div>
+          ) : null}
+        </>
       ) : (
-        <div className="text-center py-16 bg-white border border-slate-200 rounded-xl space-y-3">
-          <HelpCircle className="h-10 w-10 text-slate-400 mx-auto" />
-          <p className="text-slate-600 font-semibold">Không có kết quả so khớp phù hợp</p>
-          <p className="text-sm text-slate-400">Vui lòng điều chỉnh lại bộ lọc tìm kiếm hoặc cập nhật thêm các trường kỹ năng trong Hồ sơ để mở rộng cơ hội tìm thấy đối tác.</p>
-        </div>
+        <PortalEmpty
+          icon={<HelpCircle className="size-5" />}
+          title={t.matches.emptyTitle}
+          description={t.matches.emptyDesc}
+          action={
+            <SoftButton size="sm" onClick={handleRecalculateMatches}>
+              {t.matches.runCta}
+            </SoftButton>
+          }
+        />
       )}
 
-      {/* CONNECT DRAWER OVERLAY */}
-      {connectingMatch && (
-        <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-6 overflow-y-auto z-50">
-          <div className="bg-white rounded-xl max-w-2xl w-full p-6 space-y-6 shadow-xl border border-slate-100">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900 font-display">Gửi lời mời kết nối tới {connectingMatch.partner.organizationName}</h3>
-                <p className="text-xs text-slate-500 mt-1">Yêu cầu của bạn sẽ được chuyển thẳng đến hòm thư Deal-Flow của đại diện đối tác.</p>
-              </div>
-              <button
-                onClick={() => setConnectingMatch(null)}
-                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
-              >
-                <X className="h-5 w-5" />
-              </button>
+      <Dialog open={!!connectingMatch} onOpenChange={(o) => !o && setConnectingMatch(null)}>
+        <DialogContent className="sm:max-w-lg" showCloseButton>
+          <DialogHeader>
+            <DialogTitle>
+              {t.matches.connectTitle} ·{' '}
+              {connectingMatch?.partner?.organizationName || '—'}
+            </DialogTitle>
+            <DialogDescription>{t.matches.connectDesc}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <Label>{t.matches.recipient}</Label>
+              <Input
+                disabled
+                value={`${connectingMatch?.partner?.contactEmail || '—'} · ${connectingMatch?.partner?.organizationName || ''}`}
+              />
             </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-slate-700">Người nhận</label>
-                <input
-                  type="text"
-                  disabled
-                  value={`${connectingMatch.partner.contactEmail || 'Đại diện đối tác'} (${connectingMatch.partner.organizationName})`}
-                  className="mt-1.5 block w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-slate-700">Lời nhắn giới thiệu của bạn *</label>
-                <textarea
-                  rows={8}
-                  value={introMessage}
-                  onChange={(e) => setIntroMessage(e.target.value)}
-                  className="mt-1.5 block w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  placeholder="Viết lời nhắn giới thiệu ngắn gọn, thể hiện lý do tại sao hai bên nên làm việc với nhau..."
-                />
-                <span className="text-[10px] text-slate-400 mt-1 block">Khuyến khích giữ lời nhắn dưới 500 ký tự để có tỷ lệ phản hồi cao nhất.</span>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end space-x-3 border-t border-slate-100 pt-4">
-              <button
-                onClick={() => setConnectingMatch(null)}
-                className="px-4 py-2.5 text-sm font-semibold bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 cursor-pointer"
-              >
-                Hủy bỏ
-              </button>
-              <button
-                onClick={handleSendConnection}
-                disabled={sendingConnection}
-                className="inline-flex items-center space-x-2 px-5 py-2.5 bg-emerald-600 text-white font-bold text-sm rounded-lg hover:bg-emerald-700 shadow-sm cursor-pointer disabled:bg-slate-200"
-              >
-                <Send className="h-4 w-4" />
-                <span>{sendingConnection ? 'Đang gửi...' : 'Xác nhận gửi thư'}</span>
-              </button>
+            <div className="grid gap-2">
+              <Label>{t.matches.message}</Label>
+              <Textarea
+                rows={7}
+                value={introMessage}
+                onChange={(e) => setIntroMessage(e.target.value)}
+              />
+              <p className="text-[11px] text-muted-foreground">{t.matches.messageHint}</p>
             </div>
           </div>
-        </div>
-      )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConnectingMatch(null)}>
+              {t.cancel}
+            </Button>
+            <Button disabled={sendingConnection} onClick={handleSendConnection}>
+              <Send className="size-3.5" />
+              {sendingConnection ? t.matches.sending : t.matches.send}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
-  );
+  )
 }

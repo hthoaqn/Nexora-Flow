@@ -1,16 +1,14 @@
 import type { ReactNode } from 'react'
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardFooter,
-  CardHeader,
   CardTitle,
 } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 
-/** Vertical page rhythm — tighter than gap-5 desert spacing */
+/** Full-width page stack — fills the app content frame edge-to-edge */
 export function PageShell({
   children,
   className,
@@ -19,7 +17,14 @@ export function PageShell({
   className?: string
 }) {
   return (
-    <div className={cn('flex flex-col gap-4', className)}>{children}</div>
+    <div
+      className={cn(
+        'portal-stagger flex w-full min-w-0 flex-1 flex-col gap-4',
+        className,
+      )}
+    >
+      {children}
+    </div>
   )
 }
 
@@ -34,7 +39,7 @@ export function Toolbar({
   return (
     <div
       className={cn(
-        'dash-card flex flex-col gap-2.5 !p-3 sm:flex-row sm:flex-wrap sm:items-center',
+        'portal-card flex flex-col gap-2.5 !p-3 sm:flex-row sm:flex-wrap sm:items-center',
         className,
       )}
     >
@@ -64,15 +69,46 @@ export function Section({
   size?: 'default' | 'sm'
 }) {
   return (
-    <Card size={size} className={cn('dash-card', className)}>
+    <Card
+      size={size}
+      className={cn(
+        'portal-card border-0 shadow-none ring-1 ring-foreground/10',
+        className,
+      )}
+    >
       {title || description || action ? (
-        <CardHeader className="border-b [.border-b]:pb-3">
-          {title ? <CardTitle className="font-heading">{title}</CardTitle> : null}
-          {description ? <CardDescription>{description}</CardDescription> : null}
-          {action ? <CardAction>{action}</CardAction> : null}
-        </CardHeader>
+        <div
+          className={cn(
+            'flex flex-col gap-3 border-b px-(--card-spacing) pb-(--card-spacing)',
+            // Desktop: title block left, action right — never center-stack
+            'sm:flex-row sm:items-start sm:justify-between sm:gap-4',
+          )}
+        >
+          <div className="min-w-0 flex-1 text-left">
+            {title ? (
+              <CardTitle className="font-heading text-base sm:text-lg">
+                {title}
+              </CardTitle>
+            ) : null}
+            {description ? (
+              <CardDescription className="mt-1 max-w-2xl text-xs sm:text-sm">
+                {description}
+              </CardDescription>
+            ) : null}
+          </div>
+          {action ? (
+            <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+              {action}
+            </div>
+          ) : null}
+        </div>
       ) : null}
-      <CardContent className={cn(!title && !description && !action && 'pt-0', contentClassName)}>
+      <CardContent
+        className={cn(
+          !title && !description && !action && 'pt-0',
+          contentClassName,
+        )}
+      >
         {children}
       </CardContent>
       {footer ? <CardFooter>{footer}</CardFooter> : null}
@@ -93,7 +129,7 @@ export function DataPanel({
   return (
     <div
       className={cn(
-        'dash-card overflow-hidden !p-0',
+        'portal-card overflow-hidden !p-0',
         className,
       )}
     >

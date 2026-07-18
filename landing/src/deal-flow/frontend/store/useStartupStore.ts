@@ -467,7 +467,8 @@ export const useStartupStore = create<StartupState>()(
     }),
     {
       name: 'dealflow-startup-storage',
-      storage: createJSONStorage(() => sessionStorage),
+      // localStorage so profile draft survives reloads (same as auth)
+      storage: createJSONStorage(() => localStorage),
     }
   )
 );

@@ -4,25 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// pdf-parse / pdfjs may touch DOMMatrix at import time (Node has no DOM)
-if (typeof globalThis.DOMMatrix === "undefined") {
-  // minimal stub — enough for library load
-  globalThis.DOMMatrix = class DOMMatrix {
-    constructor() {}
-    multiplySelf() {
-      return this;
-    }
-    translateSelf() {
-      return this;
-    }
-    scaleSelf() {
-      return this;
-    }
-    inverse() {
-      return this;
-    }
-  };
-}
+import "./backend/domPolyfill";
+import { ensureDomMatrixPolyfill } from "./backend/domPolyfill";
+ensureDomMatrixPolyfill();
 if (typeof globalThis.Path2D === "undefined") {
   globalThis.Path2D = class Path2D {};
 }
@@ -511,7 +495,22 @@ interface AuthenticatedRequest extends Request {
   user?: { id: string; email: string; fullName: string; role: "startup" };
 }
 
-// Auth middleware
+/** Decode JWT payload without verifying signature (for API-issued tokens on local OCR). */
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const part = token.split(".")[1];
+    if (!part) return null;
+    const json = Buffer.from(
+      part.replace(/-/g, "+").replace(/_/g, "/"),
+      "base64",
+    ).toString("utf8");
+    return JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+// Auth middleware — accepts local deal-flow JWT OR production API JWT payload
 function requireAuth(
   req: AuthenticatedRequest,
   res: Response,
@@ -532,20 +531,40 @@ function requireAuth(
 
   const token = authHeader.split(" ")[1];
   const decoded = verifyToken(token);
-  if (!decoded) {
-    return res.status(401).json({
-      success: false,
-      message: "Unauthorized. Invalid or expired token.",
-      data: null,
-      error: {
-        code: "INVALID_TOKEN",
-        details: "Your session has expired. Please log in again.",
-      },
-    });
+  if (decoded) {
+    req.user = decoded;
+    return next();
   }
 
-  req.user = decoded;
-  next();
+  // Production api.nexora-flow.cloud tokens — use claims for OCR/profile local path
+  const payload = decodeJwtPayload(token);
+  if (payload) {
+    const id = String(
+      payload.sub || payload.userId || payload.user_id || payload.id || "",
+    );
+    const email = String(payload.email || payload.user_email || "");
+    if (id || email) {
+      req.user = {
+        id: id || `email:${email}`,
+        email,
+        fullName: String(
+          payload.fullName || payload.full_name || payload.name || email || "User",
+        ),
+        role: "startup",
+      };
+      return next();
+    }
+  }
+
+  return res.status(401).json({
+    success: false,
+    message: "Unauthorized. Invalid or expired token.",
+    data: null,
+    error: {
+      code: "INVALID_TOKEN",
+      details: "Your session has expired. Please log in again.",
+    },
+  });
 }
 
 export async function createDealFlowApp() {
@@ -594,8 +613,15 @@ export async function createDealFlowApp() {
 
   // 1. Auth: Register
   app.post("/api/v1/auth/register", (req, res) => {
-    const { email, password, fullName, expectedStartupName, agreeTerms } =
-      req.body;
+    const email = String(req.body?.email || "")
+      .trim()
+      .toLowerCase();
+    const password = String(req.body?.password || "");
+    const fullName = String(req.body?.fullName || "").trim();
+    const expectedStartupName = String(
+      req.body?.expectedStartupName || "",
+    ).trim();
+    const agreeTerms = Boolean(req.body?.agreeTerms);
 
     if (!email || !password || !fullName) {
       return sendError(
@@ -603,6 +629,16 @@ export async function createDealFlowApp() {
         "Vui lòng điền đầy đủ các trường bắt buộc",
         "VALIDATION_ERROR",
         "Họ tên, email và mật khẩu là bắt buộc.",
+        422,
+      );
+    }
+
+    if (password.length < 6) {
+      return sendError(
+        res,
+        "Mật khẩu tối thiểu 6 ký tự",
+        "WEAK_PASSWORD",
+        "Password must be at least 6 characters.",
         422,
       );
     }
@@ -629,9 +665,9 @@ export async function createDealFlowApp() {
     }
 
     // Create startup user + empty profile shell
-    const { user, profile } = db.createUser(email, password, fullName);
+    const { user } = db.createUser(email, password, fullName);
 
-    // Save initial startup expectation name to session metadata if needed
+    // Optional display name on first profile shell
     if (expectedStartupName) {
       db.updateStartupProfile(user.id, {
         startupName: expectedStartupName,
@@ -654,12 +690,15 @@ export async function createDealFlowApp() {
         refreshToken: `${token}_refresh`,
       },
       201,
-    ); // Code 201 Created
+    );
   });
 
   // 2. Auth: Login
   app.post("/api/v1/auth/login", (req, res) => {
-    const { email, password } = req.body;
+    const email = String(req.body?.email || "")
+      .trim()
+      .toLowerCase();
+    const password = String(req.body?.password || "");
 
     if (!email || !password) {
       return sendError(
@@ -672,12 +711,21 @@ export async function createDealFlowApp() {
     }
 
     const user = db.findUserByEmail(email);
-    if (!user || user.passwordHash !== password) {
+    if (!user) {
       return sendError(
         res,
         "Email hoặc mật khẩu không đúng",
         "INVALID_CREDENTIALS",
-        "Email hoặc mật khẩu không chính xác.",
+        "Không tìm thấy tài khoản. Trên Vercel, cold start có thể mất user demo — đăng ký lại hoặc giữ phiên sau register.",
+        401,
+      );
+    }
+    if (!db.verifyPassword(user, password)) {
+      return sendError(
+        res,
+        "Email hoặc mật khẩu không đúng",
+        "INVALID_CREDENTIALS",
+        "Mật khẩu không khớp.",
         401,
       );
     }

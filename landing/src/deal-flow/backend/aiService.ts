@@ -4,6 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// MUST run before pdf-parse — Node has no DOMMatrix
+import './domPolyfill'
+import { ensureDomMatrixPolyfill } from './domPolyfill'
+ensureDomMatrixPolyfill()
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { ExtractionResultDTO } from '../types';
 import * as fs from 'fs/promises';
@@ -302,7 +307,7 @@ async function ocrEmbeddedImage(imageBuffer: Buffer, mimeType: string): Promise<
   if (!client) return '';
   try {
     const response = await client.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: GEMINI_MODEL,
       contents: [
         {
           inlineData: {
@@ -322,15 +327,32 @@ async function ocrEmbeddedImage(imageBuffer: Buffer, mimeType: string): Promise<
 
 let aiClient: any = null;
 
+/** Prefer current Gemini flash models; env override supported. */
+export const GEMINI_MODEL =
+  process.env.GEMINI_MODEL ||
+  process.env.GOOGLE_GEMINI_MODEL ||
+  'gemini-2.0-flash'
+
+const GEMINI_MODEL_FALLBACKS = [
+  GEMINI_MODEL,
+  'gemini-2.0-flash',
+  'gemini-2.5-flash',
+  'gemini-1.5-flash',
+  'gemini-1.5-flash-latest',
+].filter((v, i, a) => a.indexOf(v) === i)
+
 function getAiClient() {
   if (!aiClient) {
-    const key = process.env.GEMINI_API_KEY;
-    if (key && key !== 'MY_GEMINI_API_KEY') {
+    const key =
+      process.env.GEMINI_API_KEY ||
+      process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
+      process.env.GOOGLE_API_KEY
+    if (key && key !== 'MY_GEMINI_API_KEY' && key.trim().length > 10) {
       aiClient = new GoogleGenAI({
-        apiKey: key,
+        apiKey: key.trim(),
         httpOptions: {
           headers: {
-            'User-Agent': 'aistudio-build',
+            'User-Agent': 'nexora-flow-ocr',
           }
         }
       });
@@ -413,7 +435,7 @@ export class AiService {
 
     try {
       const response = await client.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: GEMINI_MODEL,
         contents: {
           parts: [
             {
@@ -484,15 +506,114 @@ Mỗi trường được phát hiện phải trả về cấu trúc gồm: label
       const extracted = parseJsonRobustly(response.text);
       return this.mapToExtractionResult(extractionId, extracted, 'real');
     } catch (e: any) {
+      // Retry once with fallback model if primary model is unavailable
+      for (const model of GEMINI_MODEL_FALLBACKS.slice(1)) {
+        try {
+          console.warn(`Retrying image OCR with model ${model}`)
+          const response = await client.models.generateContent({
+            model,
+            contents: {
+              parts: [
+                { inlineData: { data: base64Data, mimeType } },
+                {
+                  text: `Extract all startup-related fields from this image as JSON with a "fields" array. Each field: label, type, value, exact_text, page, confidence. Only extract what is visible.`,
+                },
+              ],
+            },
+            config: {
+              responseMimeType: 'application/json',
+              responseSchema: EXTRACTION_SCHEMA,
+            },
+          })
+          const extracted = parseJsonRobustly(response.text)
+          return this.mapToExtractionResult(extractionId, extracted, 'real')
+        } catch (err) {
+          console.error(`Model ${model} failed`, err)
+        }
+      }
       console.error("Gemini Image OCR extraction failed, falling back to demo extraction:", e);
-      return this.generateDemoImageExtraction(extractionId);
+      throw new DocumentExtractionError(
+        e?.message || 'Gemini OCR failed. Check GEMINI_API_KEY and model name.',
+        'AI_EXTRACTION_FAILED',
+      )
     }
+  }
+
+  /**
+   * Gemini multimodal on raw file bytes (PDF / images in deck).
+   * Used for scanned PDFs and when pdf-parse finds no text layer.
+   */
+  private static async extractViaGeminiFile(
+    client: any,
+    buffer: Buffer,
+    fileName: string,
+    mimeType: string,
+    extractionId: string,
+  ): Promise<any | null> {
+    const b64 = buffer.toString('base64')
+    const prompt = `Bạn là AI Startup Document Extraction Engine.
+Đọc TOÀN BỘ tài liệu (mọi trang / slide / ảnh) tên "${fileName}".
+Trích xuất thông tin startup THỰC SỰ có trong tài liệu: tên, email, website, ngành, giai đoạn, vấn đề, giải pháp, đội ngũ, sản phẩm, gọi vốn...
+CHỈ tạo field khi thấy rõ trong tài liệu. Không bịa.
+Trả JSON fields[] với label, type, value, exact_text, page, confidence.
+type thuộc: company_name, email, website, industry, technology, market, startup_stage, funding, problem, solution, founder, team, location, description, business_model, customer, traction, other.`
+
+    const models = GEMINI_MODEL_FALLBACKS.filter(Boolean)
+    for (const model of models) {
+      try {
+        console.log(`[Gemini file OCR] model=${model} mime=${mimeType} file=${fileName}`)
+        const response = await client.models.generateContent({
+          model,
+          contents: {
+            parts: [
+              { inlineData: { data: b64, mimeType } },
+              { text: prompt },
+            ],
+          },
+          config: {
+            systemInstruction:
+              'You are a precise VC analyst. OCR and extract only explicit startup facts. Never invent.',
+            responseMimeType: 'application/json',
+            responseSchema: EXTRACTION_SCHEMA,
+          },
+        })
+        const extracted = parseJsonRobustly(response.text)
+        if (extracted?.fields?.length) {
+          return this.mapToExtractionResult(
+            extractionId,
+            extracted,
+            'real',
+            `[Gemini multimodal OCR]\n${String(response.text || '').slice(0, 4000)}`,
+            {
+              pageCount: 1,
+              textBlockCount: extracted.fields.length,
+              embeddedImageCount: 0,
+              usedImageOcr: true,
+              model,
+            },
+          )
+        }
+      } catch (e: any) {
+        console.warn(`[Gemini file OCR] ${model} failed:`, e?.message || e)
+      }
+    }
+    return null
   }
 
   public static async extractFromDocumentBuffer(buffer: Buffer, fileName: string, mimeType: string): Promise<any> {
     const client = getAiClient();
     const extractionId = `ext-doc-${Date.now()}`;
     const extension = path.extname(fileName).toLowerCase();
+    const resolvedMime =
+      mimeType && mimeType !== 'application/octet-stream'
+        ? mimeType
+        : extension === '.pdf'
+          ? 'application/pdf'
+          : extension === '.docx'
+            ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            : extension === '.pptx'
+              ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+              : 'application/pdf'
 
     let rawText = '';
     let blocks: any[] = [];
@@ -500,229 +621,201 @@ Mỗi trường được phát hiện phải trả về cấu trúc gồm: label
     let embeddedImageCount = 0;
     let usedImageOcr = false;
 
-    // 1. Extract raw text based on file format
-    if (extension === '.pdf') {
+    // ── PDF: try text layer, then ALWAYS prefer Gemini multimodal if thin/empty ──
+    if (extension === '.pdf' || resolvedMime === 'application/pdf') {
       try {
         const pdfData = await pdfParse(buffer);
         pageCount = pdfData.numpages || 1;
         rawText = pdfData.text || '';
-        
         const pages = rawText.split(/\u000c/);
         pages.forEach((pageText, idx) => {
           const clean = pageText.trim();
           if (clean) {
-            blocks.push({
-              type: "paragraph",
-              page: idx + 1,
-              text: clean
-            });
+            blocks.push({ type: 'paragraph', page: idx + 1, text: clean });
           }
         });
       } catch (err: any) {
-        console.error("pdf-parse failed, will try direct Gemini OCR if API key exists", err);
+        console.error('pdf-parse failed, will try Gemini multimodal', err);
+        rawText = '';
       }
 
-      // If PDF text is extremely short or empty, trigger OCR fallback
       const normalizedTxt = normalize_text(rawText);
-      if (normalizedTxt.length < 50 && client) {
-        usedImageOcr = true;
-        console.log("PDF text is empty or too short. Triggering Gemini Native PDF OCR fallback...");
-        try {
-          const response = await client.models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: {
-              parts: [
-                {
-                  inlineData: {
-                    data: buffer.toString('base64'),
-                    mimeType: "application/pdf",
-                  },
-                },
-                {
-                  text: `Bạn là AI Startup Document Extraction Engine.
-Nhiệm vụ của bạn là đọc toàn bộ tài liệu PDF đã cung cấp và phát hiện TẤT CẢ các thông tin liên quan đến startup.
-Hãy rà soát toàn bộ tất cả các trang của tài liệu PDF để không bỏ sót bất kỳ chi tiết nào.
-KHÔNG sử dụng schema cố định. Hãy tự xác định các trường thông tin xuất hiện trong tài liệu.
-Mỗi trường được phát hiện phải trả về cấu trúc gồm: label, type, value, exact_text, page, confidence.`,
-                },
-              ],
-            },
-            config: {
-              systemInstruction: "You are a highly precise, extremely strict venture capital analyst. OCR and extract only real, explicit startup details from documents. Do not invent any values.",
-              responseMimeType: "application/json",
-              responseSchema: EXTRACTION_SCHEMA,
-            }
-          });
+      // Scanned decks often have 0–200 garbage chars — threshold 200
+      const needVision = normalizedTxt.length < 200;
 
-          const extracted = parseJsonRobustly(response.text);
-          return this.mapToExtractionResult(
-            extractionId, 
-            extracted, 
-            'real', 
-            `[OCR Reconstructed Content from PDF]\n${response.text}`,
-            {
-              pageCount,
-              textBlockCount: extracted.fields?.length || 0,
-              embeddedImageCount: 0,
-              usedImageOcr: true
-            }
-          );
-        } catch (ocrErr: any) {
-          console.error("Gemini PDF OCR fallback failed, falling back to demo extraction:", ocrErr);
-          return this.generateDemoDocExtraction(extractionId, fileName, rawText);
-        }
+      if (client && needVision) {
+        usedImageOcr = true;
+        const vision = await this.extractViaGeminiFile(
+          client,
+          buffer,
+          fileName,
+          'application/pdf',
+          extractionId,
+        );
+        if (vision) return vision;
+        // fall through to demo if vision failed
+        console.warn('Gemini PDF multimodal returned no fields — demo fallback');
+        return this.generateDemoDocExtraction(
+          extractionId,
+          fileName,
+          rawText || `[PDF without text layer: ${fileName}]`,
+        );
       }
+
+      // Good text layer: still structure with Gemini text model below
     } else if (extension === '.docx') {
-      const docxResult = parseDocx(buffer);
-      rawText = docxResult.rawText;
-      blocks = docxResult.blocks;
-      embeddedImageCount = docxResult.embeddedImageCount;
-      pageCount = Math.max(1, Math.ceil(normalize_text(rawText).length / 1500));
+      try {
+        const docxResult = parseDocx(buffer);
+        rawText = docxResult.rawText;
+        blocks = docxResult.blocks;
+        embeddedImageCount = docxResult.embeddedImageCount;
+        pageCount = Math.max(1, Math.ceil(normalize_text(rawText).length / 1500));
+      } catch (e: any) {
+        console.error('parseDocx failed', e);
+        rawText = '';
+      }
     } else if (extension === '.pptx') {
-      const pptxResult = parsePptx(buffer);
-      rawText = pptxResult.rawText;
-      blocks = pptxResult.blocks;
-      embeddedImageCount = pptxResult.embeddedImageCount;
-      pageCount = pptxResult.pageCount;
+      try {
+        const pptxResult = parsePptx(buffer);
+        rawText = pptxResult.rawText;
+        blocks = pptxResult.blocks;
+        embeddedImageCount = pptxResult.embeddedImageCount;
+        pageCount = pptxResult.pageCount;
+      } catch (e: any) {
+        console.error('parsePptx failed', e);
+        rawText = '';
+      }
+    } else if (extension === '.txt' || extension === '.md' || extension === '.csv') {
+      rawText = buffer.toString('utf8');
+      blocks = [{ type: 'paragraph', page: 1, text: rawText }];
     } else {
-      throw new DocumentExtractionError(`Định dạng tài liệu không hỗ trợ: ${extension}`, 'INVALID_FILE_TYPE');
+      // Unknown — try as PDF multimodal if client
+      if (client) {
+        const vision = await this.extractViaGeminiFile(
+          client,
+          buffer,
+          fileName,
+          resolvedMime,
+          extractionId,
+        );
+        if (vision) return vision;
+      }
+      throw new DocumentExtractionError(
+        `Định dạng tài liệu không hỗ trợ: ${extension || resolvedMime}`,
+        'INVALID_FILE_TYPE',
+      );
     }
 
-    // 2. Perform OCR fallback for DOCX/PPTX if text is too short and images are embedded
+    // 2. Embedded image OCR for DOCX/PPTX
     let normalized = normalize_text(rawText);
-    if (normalized.length < 50 && embeddedImageCount > 0 && client) {
-      console.log(`Document text is too short (${normalized.length} chars) but has ${embeddedImageCount} images. Triggering embedded images OCR fallback...`);
+    if (normalized.length < 200 && embeddedImageCount > 0 && client) {
+      console.log(
+        `Document text short (${normalized.length} chars), ${embeddedImageCount} images — OCR media...`,
+      );
       usedImageOcr = true;
       try {
         const zip = new AdmZip(buffer);
         const zipEntries = zip.getEntries();
-        const mediaEntries = zipEntries.filter(entry => 
-          (entry.entryName.startsWith('word/media/') || entry.entryName.startsWith('ppt/media/')) &&
-          (entry.entryName.endsWith('.png') || entry.entryName.endsWith('.jpeg') || entry.entryName.endsWith('.jpg'))
+        const mediaEntries = zipEntries.filter(
+          (entry) =>
+            (entry.entryName.startsWith('word/media/') ||
+              entry.entryName.startsWith('ppt/media/')) &&
+            (entry.entryName.endsWith('.png') ||
+              entry.entryName.endsWith('.jpeg') ||
+              entry.entryName.endsWith('.jpg')),
         );
-        
         mediaEntries.sort((a, b) => a.entryName.localeCompare(b.entryName));
-        
         let imgIndex = 1;
         let ocrTextAccumulator = '';
-        
         for (const entry of mediaEntries) {
           const imgData = entry.getData();
-          if (imgData.length < 15 * 1024) continue;
-          if (imgIndex > 6) break;
-          
+          if (imgData.length < 8 * 1024) continue;
+          if (imgIndex > 8) break;
           let imgMime = 'image/png';
           if (entry.entryName.endsWith('.jpeg') || entry.entryName.endsWith('.jpg')) {
             imgMime = 'image/jpeg';
           }
-          
           const text = await ocrEmbeddedImage(imgData, imgMime);
           if (text.trim()) {
-            ocrTextAccumulator += `\n[Ảnh đính kèm ${imgIndex}]\n${text}\n`;
+            ocrTextAccumulator += `\n[Ảnh ${imgIndex}]\n${text}\n`;
             blocks.push({
-              type: "embedded_image",
+              type: 'embedded_image',
               source: entry.entryName,
               imageIndex: imgIndex,
-              text: text
+              text,
             });
             imgIndex++;
           }
         }
-        
         if (ocrTextAccumulator.trim()) {
-          rawText += `\n\n=== [KẾT QUẢ OCR HÌNH ẢNH ĐÍNH KÈM THƯ MỤC MEDIA] ===\n${ocrTextAccumulator}`;
+          rawText += `\n\n=== OCR MEDIA ===\n${ocrTextAccumulator}`;
           normalized = normalize_text(rawText);
         }
       } catch (ocrErr: any) {
-        console.error("Embedded images OCR extraction failed:", ocrErr);
+        console.error('Embedded images OCR failed:', ocrErr);
       }
     }
 
-    // 3. Final raw text validation
-    if (!normalized.trim()) {
-      throw new DocumentExtractionError('Không tìm thấy bất kỳ nội dung văn bản nào có thể trích xuất được trong tài liệu của bạn.', 'DOCUMENT_TEXT_NOT_FOUND');
+    // 2b. Still empty for office docs — try Gemini with file bytes
+    if (normalized.length < 80 && client && (extension === '.pptx' || extension === '.docx')) {
+      const vision = await this.extractViaGeminiFile(
+        client,
+        buffer,
+        fileName,
+        resolvedMime,
+        extractionId,
+      );
+      if (vision) return vision;
     }
 
-    // 4. Send to Gemini for full VC Startup Analysis
+    // 3. Empty text — NEVER hard-fail apply flow: demo + filename hints
+    if (!normalized.trim()) {
+      console.warn(
+        `[extractFromDocumentBuffer] No text for ${fileName} — demo extraction (user can edit form)`,
+      );
+      return this.generateDemoDocExtraction(
+        extractionId,
+        fileName,
+        `[No extractable text layer in ${fileName}. Fill form manually or re-upload a text PDF.]`,
+      );
+    }
+
+    // 4. Structure with Gemini text model
     if (!client) {
-      console.log("No valid GEMINI_API_KEY provided. Returning parsed document text without AI generation.");
+      console.log('No GEMINI_API_KEY — demo structure from raw text');
       return this.generateDemoDocExtraction(extractionId, fileName, rawText);
     }
 
     try {
-      console.log(`Sending extracted text of length ${rawText.length} to Gemini for structure analysis...`);
+      console.log(`Sending text len=${rawText.length} to Gemini for structure...`);
       const response = await client.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: GEMINI_MODEL,
         contents: `Bạn là AI Startup Document Extraction Engine.
 Nhiệm vụ của bạn là đọc toàn bộ văn bản dưới đây và phát hiện TẤT CẢ các thông tin liên quan đến startup.
 Tài liệu nguồn có tên: "${fileName}".
 KHÔNG sử dụng schema cố định. Hãy tự xác định các trường thông tin xuất hiện trong tài liệu.
 
-=========================
-QUY TẮC BẮT BUỘC
-=========================
-1. CHỈ tạo field khi thông tin thực sự tồn tại trong tài liệu. Hãy rà soát toàn bộ tất cả các trang/slides của văn bản để không bỏ sót bất kỳ chi tiết nào.
-2. KHÔNG tạo field rỗng hoặc field bằng suy luận, đoán, tự bổ sung, tự hoàn thiện, tự sửa, tự diễn giải, tự rút gọn.
-3. KHÔNG được tự nghĩ ra tên startup, email, website, funding...
-4. Nếu một thông tin không tồn tại thì KHÔNG tạo field đó.
-5. KHÔNG paraphrase, không dùng kiến thức bên ngoài.
-6. Độ chính xác QUAN TRỌNG HƠN độ đầy đủ. Nếu không chắc chắn 100% => KHÔNG tạo field đó.
+QUY TẮC: CHỈ tạo field khi thông tin thực sự tồn tại. Không bịa. type thuộc company_name, email, website, industry, technology, market, startup_stage, funding, problem, solution, founder, team, location, description, business_model, customer, traction, other.
 
-=========================
-PHÂN NHÓM "type" BẮT BUỘC (Đặt theo một trong các nhóm sau):
-=========================
-- company_name: Tên startup
-- tagline: Tagline của startup
-- description: Mô tả chi tiết
-- website: Website chính thức
-- email: Email liên hệ
-- phone: Số điện thoại
-- industry: Lĩnh vực hoạt động
-- technology: Công nghệ cốt lõi
-- market: Thị trường mục tiêu
-- startup_stage: Giai đoạn phát triển (Seed, Pre-seed, Series A,...)
-- funding: Số tiền gọi vốn hoặc nhu cầu vốn
-- valuation: Định giá startup
-- revenue: Doanh thu của startup
-- traction: Chỉ số traction/thành tựu đạt được
-- customer: Khách hàng mục tiêu
-- business_model: Mô hình kinh doanh
-- problem: Vấn đề cần giải quyết
-- solution: Giải pháp của startup
-- founder: Tên người sáng lập
-- team: Thông tin đội ngũ
-- location: Địa chỉ/Địa điểm hoạt động
-- social: Mạng xã hội của startup
-- patent: Bằng sáng chế
-- award: Giải thưởng đạt được
-- partnership: Đối tác/Quan hệ hợp tác
-- timeline: Mốc thời gian quan trọng
-- roadmap: Lịch trình phát triển tương lai
-- metric: Chỉ số đo lường khác
-- other: Các thông tin khác không thuộc nhóm trên
-
-TEXT NGUỒN TÀI LIỆU CỦA STARTUP:
-${rawText}`,
+TEXT NGUỒN:
+${rawText.slice(0, 120000)}`,
         config: {
-          systemInstruction: "You are a highly precise, extremely strict venture capital analyst. Read and extract only real, explicit startup details from documents. Do not invent any values.",
-          responseMimeType: "application/json",
+          systemInstruction:
+            'You are a highly precise VC analyst. Extract only real, explicit startup details. Do not invent.',
+          responseMimeType: 'application/json',
           responseSchema: EXTRACTION_SCHEMA,
-        }
+        },
       });
 
       const extracted = parseJsonRobustly(response.text);
-      
-      const metadata = {
+      return this.mapToExtractionResult(extractionId, extracted, 'real', rawText, {
         pageCount,
         textBlockCount: blocks.length,
         embeddedImageCount,
-        usedImageOcr
-      };
-
-      console.log("Analysis success! Mapping to extraction result...");
-      return this.mapToExtractionResult(extractionId, extracted, 'real', rawText, metadata);
+        usedImageOcr,
+      });
     } catch (e: any) {
-      console.error("Gemini text document extraction failed, falling back to local parsed results:", e);
+      console.error('Gemini text extraction failed, demo fallback:', e);
       return this.generateDemoDocExtraction(extractionId, fileName, rawText);
     }
   }
@@ -740,7 +833,7 @@ ${rawText}`,
 
       try {
         const response = await client.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: GEMINI_MODEL,
           contents: {
             parts: [
               {
@@ -851,7 +944,7 @@ Mỗi trường được phát hiện phải trả về cấu trúc gồm: label
 
     try {
       const response = await client.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: GEMINI_MODEL,
         contents: `Bạn là AI Startup Document Extraction Engine.
 Nhiệm vụ của bạn là đọc toàn bộ văn bản dưới đây và phát hiện TẤT CẢ các thông tin liên quan đến startup.
 Tài liệu nguồn có tên: "${fileName}".

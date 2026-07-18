@@ -1,5 +1,6 @@
 'use client'
 
+import { useTx } from '@/lib/tx'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
@@ -51,7 +52,11 @@ import { Spinner } from '@/components/ui/spinner'
 import {
   APP_STATUS_LABEL,
   DECISION_STATUSES,
+  HUMAN_REVIEW_STATUSES,
   PROFILE_FIELD_LABELS,
+  pathToDecisionStatus,
+  reachableDecisionTargets,
+  isHumanReviewStatus,
 } from '@/lib/status'
 
 function fieldLabel(key: string) {
@@ -98,6 +103,7 @@ const PROFILE_KEYS = [
 ]
 
 export default function ApplicationDetailPage() {
+  const { tx } = useTx()
   const { session } = useAuth()
   const params = useParams()
   const applicationId = String(params?.applicationId ?? '')
@@ -121,7 +127,9 @@ export default function ApplicationDetailPage() {
       setApp(data)
       setMatchingOptIn(!!data.matchingOptIn)
       setNotes(data.internalNotes || '')
-      setDecisionStatus(DECISION_STATUSES.includes(data.status) ? data.status : 'SHORTLISTED')
+      setDecisionStatus(
+        isHumanReviewStatus(data.status) ? data.status : 'SHORTLISTED',
+      )
       const base: Record<string, string> = {}
       const src = data.confirmedProfile || data.submittedProfile || {}
       for (const key of PROFILE_KEYS) {
@@ -131,7 +139,7 @@ export default function ApplicationDetailPage() {
       }
       setConfirmed(base)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Lỗi')
+      setError(e instanceof Error ? e.message : tx('Lỗi', 'Error'))
     } finally {
       setLoading(false)
     }
@@ -167,28 +175,46 @@ export default function ApplicationDetailPage() {
           consentPolicyVersion: 'nexora-consent-v1',
         }),
       )
-      toast.success('Đã xác nhận')
+      toast.success(tx('Đã xác nhận', 'Confirmed'))
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Lỗi')
+      toast.error(e instanceof Error ? e.message : tx('Lỗi', 'Error'))
     } finally {
       setSaving(false)
     }
   }
 
-  const runDecision = async () => {
-    if (!session) return
+  const runDecision = async (targetOverride?: ApplicationStatus) => {
+    if (!session || !app) return
+    const target = targetOverride || decisionStatus
     setSaving(true)
     try {
-      setApp(
-        await updateDecision(session, applicationId, {
-          status: decisionStatus,
-          reason: decisionReason,
-          internalNotes: notes,
-        }),
+      // Multi-hop is handled inside updateDecision (client.ts) so every caller is safe.
+      // Example: ELIGIBLE → SHORTLISTED → ACCEPTED (never PATCH ACCEPTED while still ELIGIBLE).
+      const hops = pathToDecisionStatus(app.status, target)
+      if (hops && hops.length > 1) {
+        toast.message(
+          tx(
+            `Đang áp dụng: ${[app.status, ...hops].join(' → ')}…`,
+            `Applying: ${[app.status, ...hops].join(' → ')}…`,
+          ),
+        )
+      }
+      const updated = await updateDecision(session, applicationId, {
+        status: target,
+        reason: decisionReason,
+        internalNotes: notes,
+      })
+      setApp(updated)
+      const next = String(updated.status || target).toUpperCase() as ApplicationStatus
+      if (DECISION_STATUSES.includes(next)) setDecisionStatus(next)
+      toast.success(
+        tx(
+          `Đã ghi: ${APP_STATUS_LABEL[updated.status as ApplicationStatus] || updated.status}`,
+          `Recorded: ${updated.status}`,
+        ),
       )
-      toast.success('Đã ghi quyết định')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Lỗi')
+      toast.error(e instanceof Error ? e.message : tx('Lỗi', 'Error'))
     } finally {
       setSaving(false)
       setConfirmOpen(false)
@@ -196,22 +222,30 @@ export default function ApplicationDetailPage() {
   }
 
   if (loading) return <LoadingBlock />
-  if (!app) return <ErrorAlert message={error || 'Không tìm thấy'} onRetry={load} />
+  if (!app) return <ErrorAlert message={error || tx('Không tìm thấy', 'Not found')} onRetry={load} />
 
   const aiKeys = Object.keys(app.aiProfile || {}).filter((k) => k !== 'missingFields')
+  const decisionOptions = reachableDecisionTargets(app.status)
+  // Keep current selection valid when status changes
+  const selectValue = decisionOptions.includes(decisionStatus)
+    ? decisionStatus
+    : decisionOptions[0] || 'SHORTLISTED'
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title={displayName(app)}
-        description="Xác nhận profile · đối chiếu AI · ghi quyết định"
+        description={tx(
+          'Xác nhận hồ sơ, đối chiếu trích xuất, ghi quyết định',
+          'Confirm profile, review extraction, record decision',
+        )}
         breadcrumb={
           app.programId ? (
             <Link
               href={`/programs/${app.programId}/applications`}
               className="hover:text-foreground"
             >
-              ← Danh sách hồ sơ
+              ← {tx('Danh sách hồ sơ', 'All applications')}
             </Link>
           ) : null
         }
@@ -234,7 +268,7 @@ export default function ApplicationDetailPage() {
       {missing.length > 0 ? (
         <div className="flex flex-wrap gap-1.5 rounded-xl border border-dashed bg-muted/20 p-3">
           <span className="w-full text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Thiếu dữ liệu ({missing.length})
+            {tx('Thiếu dữ liệu', 'Missing data')} ({missing.length})
           </span>
           {missing.map((m) => (
             <Badge key={m} variant="outline" className="text-[10px]">
@@ -246,10 +280,10 @@ export default function ApplicationDetailPage() {
 
       <Tabs defaultValue="confirm">
         <TabsList className="h-9 w-full justify-start overflow-x-auto">
-          <TabsTrigger value="confirm">Xác nhận</TabsTrigger>
-          <TabsTrigger value="layers">3 lớp dữ liệu</TabsTrigger>
-          <TabsTrigger value="notes">Ghi chú</TabsTrigger>
-          <TabsTrigger value="decision">Quyết định</TabsTrigger>
+          <TabsTrigger value="confirm">{tx('Xác nhận', 'Confirm')}</TabsTrigger>
+          <TabsTrigger value="layers">{tx('3 lớp dữ liệu', '3 data layers')}</TabsTrigger>
+          <TabsTrigger value="notes">{tx('Ghi chú', 'Notes')}</TabsTrigger>
+          <TabsTrigger value="decision">{tx('Quyết định', 'Decision')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="confirm" className="mt-3">
@@ -273,7 +307,10 @@ export default function ApplicationDetailPage() {
                       onCheckedChange={(v) => setMatchingOptIn(v === true)}
                     />
                     <Label htmlFor="optin" className="text-sm font-normal">
-                      Cho phép matching sau này
+                      {tx(
+                        'Cho phép so khớp sau này',
+                        'Allow future matching',
+                      )}
                     </Label>
                   </div>
                 </Field>
@@ -281,7 +318,7 @@ export default function ApplicationDetailPage() {
               <div className="mt-4 flex flex-wrap gap-2 border-t pt-4">
                 <Button size="sm" disabled={saving} onClick={() => void onConfirm()}>
                   {saving ? <Spinner data-icon="inline-start" /> : null}
-                  Xác nhận profile
+                  {tx('Xác nhận hồ sơ', 'Confirm profile')}
                 </Button>
               </div>
             </CardContent>
@@ -291,9 +328,9 @@ export default function ApplicationDetailPage() {
         <TabsContent value="layers" className="mt-3">
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
             {[
-              { title: 'Startup nộp', data: app.submittedProfile },
+              { title: tx('Startup nộp', 'Submitted by startup'), data: app.submittedProfile },
               { title: 'AI extract', data: null as null },
-              { title: 'Đã xác nhận', data: app.confirmedProfile },
+              { title: tx('Đã xác nhận', 'Confirmed'), data: app.confirmedProfile },
             ].map((col) => (
               <Card key={col.title} size="sm">
                 <CardContent className="pt-0">
@@ -301,7 +338,12 @@ export default function ApplicationDetailPage() {
                   <div className="flex max-h-80 flex-col gap-2 overflow-y-auto text-xs">
                     {col.title === 'AI extract' ? (
                       aiKeys.length === 0 ? (
-                        <p className="text-muted-foreground">Chưa có AI profile</p>
+                        <p className="text-muted-foreground">
+                          {tx(
+                            'Chưa có hồ sơ trích xuất',
+                            'No extraction profile yet',
+                          )}
+                        </p>
                       ) : (
                         aiKeys.map((k) => {
                           const { value, confidence } = extractAiValue(app.aiProfile?.[k])
@@ -347,7 +389,10 @@ export default function ApplicationDetailPage() {
                 className="min-h-32"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="Ghi chú nội bộ cho reviewer…"
+                placeholder={tx(
+                  'Ghi chú nội bộ cho người duyệt…',
+                  'Internal notes for reviewers…',
+                )}
               />
               <Button
                 size="sm"
@@ -362,15 +407,15 @@ export default function ApplicationDetailPage() {
                         internalNotes: notes,
                       }),
                     )
-                    toast.success('Đã lưu')
+                    toast.success(tx('Đã lưu', 'Saved'))
                   } catch (e) {
-                    toast.error(e instanceof Error ? e.message : 'Lỗi')
+                    toast.error(e instanceof Error ? e.message : tx('Lỗi', 'Error'))
                   } finally {
                     setSaving(false)
                   }
                 }}
               >
-                Lưu ghi chú
+                {tx('Lưu ghi chú', 'Save notes')}
               </Button>
             </CardContent>
           </Card>
@@ -379,48 +424,102 @@ export default function ApplicationDetailPage() {
         <TabsContent value="decision" className="mt-3">
           <Card className="max-w-xl">
             <CardContent className="flex flex-col gap-3 pt-0">
+              {['ELIGIBLE', 'NEEDS_REVIEW', 'RECEIVED', 'EXTRACTING'].includes(
+                String(app.status || '').toUpperCase(),
+              ) ? (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-xs leading-relaxed text-amber-900 dark:text-amber-100">
+                  <p className="font-semibold">
+                    {tx(
+                      'Chưa thể shortlist / chấp nhận từ trạng thái này',
+                      'Cannot shortlist or accept from this status yet',
+                    )}
+                  </p>
+                  <p className="mt-1">
+                    {tx(
+                      'Hiện tại: Sẵn sàng chấm. Hãy vào Xếp hạng của chương trình → chạy chấm (AI) đến Đã chấm, rồi quay lại đây chọn Danh sách rút gọn / Được chọn. Tạm thời chỉ có thể Từ chối hoặc Lưu trữ.',
+                      'Current: Eligible. Open the program Ranking page → run scoring until Scored, then return here for Shortlist / Accepted. For now you can only Reject or Archive.',
+                    )}
+                  </p>
+                  {app.programId ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-2 h-9 w-full rounded-full sm:w-auto"
+                      render={
+                        <Link href={`/programs/${app.programId}/ranking`} />
+                      }
+                      nativeButton={false}
+                    >
+                      {tx('Mở trang Xếp hạng', 'Open Ranking')}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
               <FieldGroup className="gap-3">
                 <Field>
-                  <FieldLabel>Trạng thái quyết định</FieldLabel>
+                  <FieldLabel>
+                    {tx('Trạng thái quyết định', 'Decision status')}
+                  </FieldLabel>
                   <Select
-                    value={decisionStatus}
-                    onValueChange={(v) => v && setDecisionStatus(v as ApplicationStatus)}
+                    value={selectValue}
+                    onValueChange={(v) =>
+                      v && setDecisionStatus(v as ApplicationStatus)
+                    }
                   >
                     <SelectTrigger className="w-full">
-                      <SelectValue />
+                      <SelectValue
+                        placeholder={tx('Chọn trạng thái', 'Choose status')}
+                      >
+                        {APP_STATUS_LABEL[selectValue] || selectValue}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectGroup>
-                        {DECISION_STATUSES.map((s) => (
+                        {(decisionOptions.length
+                          ? decisionOptions
+                          : HUMAN_REVIEW_STATUSES
+                        ).map((s) => (
                           <SelectItem key={s} value={s}>
-                            {APP_STATUS_LABEL[s]}
+                            {APP_STATUS_LABEL[s] || s}
                           </SelectItem>
                         ))}
                       </SelectGroup>
                     </SelectContent>
                   </Select>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    {tx(
+                      `Hiện tại: ${APP_STATUS_LABEL[app.status as ApplicationStatus] || app.status}. Chỉ gửi trạng thái thẩm định con người (shortlist, phỏng vấn, chấp nhận, từ chối, lưu trữ).`,
+                      `Current: ${app.status}. Only human-review states (shortlist, interview, accept, reject, archive).`,
+                    )}
+                  </p>
                 </Field>
                 <Field>
-                  <FieldLabel>Lý do</FieldLabel>
+                  <FieldLabel>{tx('Lý do', 'Reason')}</FieldLabel>
                   <Textarea
                     className="min-h-20"
                     value={decisionReason}
                     onChange={(e) => setDecisionReason(e.target.value)}
-                    placeholder="Lý do shortlist / reject…"
+                    placeholder={tx(
+                      'Lý do shortlist / từ chối…',
+                      'Reason for shortlist / reject…',
+                    )}
                   />
                 </Field>
               </FieldGroup>
-              <div className="flex flex-wrap gap-2 border-t pt-3">
+              <div className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:flex-wrap">
                 <Button
                   size="sm"
-                  disabled={saving}
+                  className="h-10 w-full rounded-full sm:h-9 sm:w-auto"
+                  disabled={saving || !decisionOptions.length}
                   onClick={() => {
-                    if (['ACCEPTED', 'REJECTED', 'ARCHIVED'].includes(decisionStatus)) {
+                    const target = selectValue
+                    setDecisionStatus(target)
+                    if (['ACCEPTED', 'REJECTED', 'ARCHIVED'].includes(target)) {
                       setConfirmOpen(true)
-                    } else void runDecision()
+                    } else void runDecision(target)
                   }}
                 >
-                  Ghi quyết định
+                  {tx('Ghi quyết định', 'Record decision')}
                 </Button>
                 <Button
                   size="sm"
@@ -438,7 +537,7 @@ export default function ApplicationDetailPage() {
                     toast.success('Matching on')
                   }}
                 >
-                  Bật matching
+                  {tx('Bật so khớp', 'Enable matching')}
                 </Button>
               </div>
             </CardContent>
@@ -449,15 +548,21 @@ export default function ApplicationDetailPage() {
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Xác nhận quyết định?</AlertDialogTitle>
+            <AlertDialogTitle>{tx('Xác nhận quyết định?', 'Confirm decision?')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Chuyển sang {APP_STATUS_LABEL[decisionStatus] || decisionStatus}. Hành động này được
-              ghi audit.
+              {tx('Chuyển sang', 'Move to')}{' '}
+              {APP_STATUS_LABEL[selectValue] || selectValue}.{' '}
+              {tx(
+                'Hành động này được ghi nhật ký. Các bước trung gian hợp lệ sẽ được áp dụng tự động.',
+                'This action is audited. Valid intermediate steps are applied automatically.',
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Hủy</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void runDecision()}>Xác nhận</AlertDialogAction>
+            <AlertDialogCancel>{tx('Hủy', 'Cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void runDecision(selectValue)}>
+              {tx('Xác nhận', 'Confirm')}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

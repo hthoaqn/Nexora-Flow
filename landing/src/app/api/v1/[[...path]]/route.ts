@@ -3,18 +3,9 @@
  * Bridges Web Request → Node-like stream req so multer + express.json work.
  */
 
-// pdf-parse may require DOMMatrix at module init
-if (typeof globalThis.DOMMatrix === 'undefined') {
-  // @ts-expect-error minimal stub
-  globalThis.DOMMatrix = class DOMMatrix {
-    multiplySelf() {
-      return this
-    }
-    inverse() {
-      return this
-    }
-  }
-}
+import '@/deal-flow/backend/domPolyfill'
+import { ensureDomMatrixPolyfill } from '@/deal-flow/backend/domPolyfill'
+ensureDomMatrixPolyfill()
 
 import type { NextRequest } from 'next/server'
 import { Readable } from 'node:stream'

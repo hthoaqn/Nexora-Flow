@@ -1,5 +1,6 @@
 'use client'
 
+import { useTx } from '@/lib/tx'
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { Columns2Icon } from 'lucide-react'
@@ -22,6 +23,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/componen
 import { cn } from '@/lib/utils'
 
 export default function ComparePage() {
+  const { tx } = useTx()
   const { session } = useAuth()
   const params = useParams()
   const programId = String(params?.programId ?? "")
@@ -39,7 +41,7 @@ export default function ComparePage() {
       const appPage = await listApplications(session, programId, { limit: 100 })
       setApps(appPage.items || [])
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Lỗi')
+      setError(e instanceof Error ? e.message : tx('Lỗi', 'Error'))
     } finally {
       setLoading(false)
     }
@@ -53,7 +55,7 @@ export default function ComparePage() {
     setSelected((prev) => {
       if (prev.includes(id)) return prev.filter((x) => x !== id)
       if (prev.length >= 5) {
-        toast.message('Tối đa 5 hồ sơ')
+        toast.message(tx('Tối đa 5 hồ sơ', 'Max 5 applications'))
         return prev
       }
       return [...prev, id]
@@ -62,7 +64,7 @@ export default function ComparePage() {
 
   const onCompare = async () => {
     if (!session || selected.length < 2) {
-      toast.message('Chọn ≥2 hồ sơ')
+      toast.message(tx('Chọn ≥2 hồ sơ', 'Pick at least 2 applications'))
       return
     }
     setComparing(true)
@@ -74,7 +76,7 @@ export default function ComparePage() {
       const list = Array.isArray(data) ? data : data.items || []
       setRows(list)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Không so sánh được')
+      setError(e instanceof Error ? e.message : tx('Không so sánh được', 'Comparison failed'))
     } finally {
       setComparing(false)
     }
@@ -85,18 +87,18 @@ export default function ComparePage() {
   return (
     <PageShell>
       <PageHeader
-        title="So sánh"
-        description="Chọn 2–5 startup đã chấm để đối chiếu điểm & breakdown side-by-side."
+        title={tx('So sánh')}
+        description={tx('Chọn 2–5 startup đã chấm để đối chiếu điểm & breakdown side-by-side.', 'Pick 2–5 scored startups to compare scores & breakdowns side-by-side.')}
         meta={
           <>
-            <Badge variant="secondary">{apps.length} hồ sơ</Badge>
-            <Badge variant="outline">{selected.length}/5 đã chọn</Badge>
+            <Badge variant="secondary">{apps.length} {tx('hồ sơ', 'applications')}</Badge>
+            <Badge variant="outline">{selected.length}/5 {tx('đã chọn', 'selected')}</Badge>
           </>
         }
         actions={
           <Button size="sm" disabled={comparing || selected.length < 2} onClick={() => void onCompare()}>
             {comparing ? <Spinner data-icon="inline-start" /> : <Columns2Icon data-icon="inline-start" />}
-            So sánh
+            {tx('So sánh')}
           </Button>
         }
       />
@@ -107,13 +109,13 @@ export default function ComparePage() {
       {apps.length < 2 ? (
         <EmptyState
           icon={<Columns2Icon />}
-          title="Cần ≥2 hồ sơ"
-          description="Upload và chấm thêm startup trước khi so sánh."
+          title={tx('Cần ≥2 hồ sơ', 'Need at least 2 applications')}
+          description={tx('Upload và chấm thêm startup trước khi so sánh.', 'Upload and score more startups before comparing.')}
         />
       ) : (
         <Section
-          title="Chọn hồ sơ"
-          description="Tick 2–5 startup · ưu tiên đã có screening result"
+          title={tx('Chọn hồ sơ', 'Pick applications')}
+          description={tx('Tick 2–5 startup · ưu tiên đã có screening result', 'Tick 2–5 startups · scored ones preferred')}
           size="sm"
         >
           <div className="flex flex-wrap gap-2">
@@ -159,7 +161,7 @@ export default function ComparePage() {
                   </div>
                 ))}
                 {!(r.breakdown || []).length ? (
-                  <p className="text-xs text-muted-foreground">Không có breakdown</p>
+                  <p className="text-xs text-muted-foreground">{tx('Không có breakdown', 'No breakdown')}</p>
                 ) : null}
               </CardContent>
               <CardFooter>
@@ -176,11 +178,11 @@ export default function ComparePage() {
       ) : selected.length >= 2 ? (
         <EmptyState
           icon={<Columns2Icon />}
-          title="Chưa có bảng so sánh"
-          description="Bấm So sánh để tải breakdown."
+          title={tx('Chưa có bảng so sánh', 'No comparison yet')}
+          description={tx('Bấm So sánh để tải breakdown.', 'Click Compare to load breakdowns.')}
           action={
             <Button size="sm" onClick={() => void onCompare()}>
-              Chạy so sánh
+              {tx('Chạy so sánh', 'Run comparison')}
             </Button>
           }
         />

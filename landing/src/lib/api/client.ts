@@ -54,6 +54,10 @@ function formatError(body: unknown, fallback: string): string {
   if (typeof b.message === 'string') return b.message
   if (typeof b.error === 'string') return b.error
   if (typeof b.detail === 'string') return b.detail
+  if (b.detail && typeof b.detail === 'object' && !Array.isArray(b.detail)) {
+    const d = b.detail as { message?: string; code?: string; msg?: string }
+    return d.message || d.msg || (d.code ? String(d.code) : fallback)
+  }
   if (Array.isArray(b.detail)) {
     return b.detail
       .map((d) => {
@@ -244,16 +248,177 @@ export function updateWorkspace(
   })
 }
 
-export function updateDecision(
+function normalizeAppStatus(s: unknown): ApplicationStatus {
+  const u = String(s || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '_')
+  return u as ApplicationStatus
+}
+
+function isTransitionError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  return /invalid decision transition/i.test(msg)
+}
+
+async function patchDecisionOnce(
   session: AuthSession,
   applicationId: string,
   body: DecisionUpdate,
-) {
+): Promise<Application> {
   return apiFetch<Application>(`/api/applications/${applicationId}/decision`, {
     method: 'PATCH',
     session,
-    json: body,
+    json: {
+      status: normalizeAppStatus(body.status),
+      reason: (body.reason ?? '').slice(0, 4000),
+      internalNotes: (body.internalNotes ?? '').slice(0, 12000),
+    },
   })
+}
+
+/** Ordered candidate paths from `from` → `to` (each path is hops after `from`). */
+function decisionPathCandidates(
+  from: ApplicationStatus,
+  to: ApplicationStatus,
+  primary: ApplicationStatus[] | null,
+): ApplicationStatus[][] {
+  const out: ApplicationStatus[][] = []
+  const push = (hops: ApplicationStatus[]) => {
+    if (!hops.length) return
+    const key = hops.join('>')
+    if (!out.some((s) => s.join('>') === key)) out.push(hops)
+  }
+  if (primary?.length) push(primary)
+
+  // Only human-review hops — never SCORED/ELIGIBLE/NEEDS_REVIEW as decision body
+  const table: Partial<Record<string, ApplicationStatus[][]>> = {
+    'SCORED>ACCEPTED': [
+      ['SHORTLISTED', 'ACCEPTED'],
+      ['ACCEPTED'],
+      ['SHORTLISTED', 'INTERVIEW', 'ACCEPTED'],
+      ['INTERVIEW', 'ACCEPTED'],
+    ],
+    'SCORED>SHORTLISTED': [['SHORTLISTED']],
+    'SCORED>INTERVIEW': [
+      ['SHORTLISTED', 'INTERVIEW'],
+      ['INTERVIEW'],
+    ],
+    'SHORTLISTED>ACCEPTED': [['ACCEPTED'], ['INTERVIEW', 'ACCEPTED']],
+    'INTERVIEW>ACCEPTED': [['ACCEPTED']],
+    'ELIGIBLE>REJECTED': [['REJECTED']],
+    'ELIGIBLE>ARCHIVED': [['ARCHIVED']],
+    'SCORED>REJECTED': [['REJECTED']],
+    'SCORED>ARCHIVED': [['ARCHIVED']],
+  }
+  for (const hops of table[`${from}>${to}`] || []) push(hops)
+  push([to]) // last resort: direct
+  return out
+}
+
+/**
+ * Safe decision update: backend rejects illegal jumps (ELIGIBLE → ACCEPTED).
+ * Loads current status, walks multi-hop paths, re-fetches after each hop,
+ * tries alternate intermediates on failure.
+ */
+export async function updateDecision(
+  session: AuthSession,
+  applicationId: string,
+  body: DecisionUpdate,
+): Promise<Application> {
+  const { pathToDecisionStatus } = await import('@/lib/status')
+
+  const target = normalizeAppStatus(body.status)
+  let app = await getApplication(session, applicationId)
+  let from = normalizeAppStatus(app.status)
+
+  if (from === target) {
+    return patchDecisionOnce(session, applicationId, {
+      status: target,
+      reason: body.reason,
+      internalNotes: body.internalNotes,
+    })
+  }
+
+  const sequences = decisionPathCandidates(
+    from,
+    target,
+    pathToDecisionStatus(from, target),
+  )
+
+  let lastError: unknown = null
+
+  for (const sequence of sequences) {
+    try {
+      app = await getApplication(session, applicationId)
+      from = normalizeAppStatus(app.status)
+      if (from === target) return app
+
+      // Drop hops already reached if server advanced mid-flight
+      let remaining = sequence
+      const at = sequence.indexOf(from)
+      if (at >= 0) remaining = sequence.slice(at + 1)
+      else {
+        const live = pathToDecisionStatus(from, target)
+        if (live?.length) remaining = live
+      }
+      if (!remaining.length) {
+        if (normalizeAppStatus(app.status) === target) return app
+        remaining = [target]
+      }
+
+      for (let i = 0; i < remaining.length; i++) {
+        const hop = remaining[i]
+        const isLast = i === remaining.length - 1
+        const before = normalizeAppStatus(app.status)
+        if (before === hop || before === target) {
+          if (before === target) break
+          continue
+        }
+
+        app = await patchDecisionOnce(session, applicationId, {
+          status: hop,
+          reason: isLast
+            ? body.reason || `Decision ${from} → ${target}`
+            : `Step ${before} → ${hop} (toward ${target})`,
+          internalNotes: isLast ? body.internalNotes ?? '' : '',
+        })
+
+        // Trust GET over PATCH body — avoid next hop thinking we are still ELIGIBLE
+        app = await getApplication(session, applicationId)
+        const after = normalizeAppStatus(app.status)
+        if (after !== hop && after !== target) {
+          throw new ApiError(
+            409,
+            `Invalid decision transition: ${before} -> ${hop}`,
+            app,
+          )
+        }
+        if (after === target) break
+      }
+
+      if (normalizeAppStatus(app.status) === target) {
+        return app
+      }
+      // Sequence finished but not on target — try next sequence
+      lastError = new ApiError(
+        422,
+        `Invalid decision transition: ${normalizeAppStatus(app.status)} -> ${target}`,
+      )
+    } catch (e) {
+      lastError = e
+      if (
+        isTransitionError(e) ||
+        (e instanceof ApiError && [400, 409, 422].includes(e.status))
+      ) {
+        continue // try next path
+      }
+      throw e
+    }
+  }
+
+  if (lastError instanceof Error) throw lastError
+  throw new ApiError(422, `Invalid decision transition: ${from} -> ${target}`)
 }
 
 export function startScreening(

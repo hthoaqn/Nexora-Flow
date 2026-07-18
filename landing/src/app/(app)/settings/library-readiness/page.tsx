@@ -1,5 +1,6 @@
 'use client'
 
+import { useTx } from '@/lib/tx'
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ArrowRightIcon, FileTextIcon, FolderKanbanIcon, SparklesIcon } from 'lucide-react'
@@ -26,6 +27,7 @@ import {
 type Row = { program: Program; summary: ProgramSummary | null }
 
 export default function LibraryReadinessPage() {
+  const { tx } = useTx()
   const { session } = useAuth()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -49,7 +51,7 @@ export default function LibraryReadinessPage() {
       )
       setRows(next)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Lỗi')
+      setError(e instanceof Error ? e.message : tx('Lỗi', 'Error'))
     } finally {
       setLoading(false)
     }
@@ -74,12 +76,12 @@ export default function LibraryReadinessPage() {
   return (
     <PageShell>
       <PageHeader
-        title="Thư viện"
-        description={`Sẵn sàng matching · ${orgLabel(session?.organizationId)}`}
+        title={tx('Thư viện')}
+        description={`${tx('Sẵn sàng matching', 'Matching readiness')} · ${orgLabel(session?.organizationId)}`}
         meta={<Badge variant={apps >= targetApps ? 'default' : 'secondary'}>{pct}%</Badge>}
         actions={
           <Button size="sm" render={<Link href="/programs" />} nativeButton={false}>
-            Chương trình
+            {tx('Chương trình')}
             <ArrowRightIcon className="size-3.5" />
           </Button>
         }
@@ -89,10 +91,10 @@ export default function LibraryReadinessPage() {
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
-          { icon: FolderKanbanIcon, label: 'Chương trình', value: programs },
-          { icon: FileTextIcon, label: 'Hồ sơ', value: apps },
-          { icon: SparklesIcon, label: 'Đã chấm', value: results },
-          { icon: FileTextIcon, label: 'Chờ duyệt', value: pending },
+          { icon: FolderKanbanIcon, label: tx('Chương trình'), value: programs },
+          { icon: FileTextIcon, label: tx('Hồ sơ'), value: apps },
+          { icon: SparklesIcon, label: tx('Đã chấm', 'Scored'), value: results },
+          { icon: FileTextIcon, label: tx('Chờ duyệt', 'Pending review'), value: pending },
         ].map((k) => (
           <div key={k.label} className="rounded-xl border bg-card p-4">
             <k.icon className="mb-2 size-4 text-primary" />
@@ -102,7 +104,7 @@ export default function LibraryReadinessPage() {
         ))}
       </div>
 
-      <Section title="Tiến độ hồ sơ" description={`Mục tiêu gợi ý: ${targetApps} hồ sơ`}>
+      <Section title={tx('Tiến độ hồ sơ', 'Application progress')} description={`${tx('Mục tiêu gợi ý:', 'Suggested target:')} ${targetApps} ${tx('hồ sơ', 'applications')}`}>
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Library fill</span>
           <span className="font-semibold tabular-nums">
@@ -112,20 +114,20 @@ export default function LibraryReadinessPage() {
         <Progress value={pct} className="mt-2 h-2.5" />
         {pending > 0 ? (
           <p className="mt-3 text-xs text-muted-foreground">
-            Có {pending} hồ sơ chờ duyệt —{' '}
+            {tx('Có', 'There are')} {pending} {tx('hồ sơ chờ duyệt', 'applications pending review')} —{' '}
             <Link href="/settings/organization" className="text-primary hover:underline">
-              mở kiểm duyệt
+              {tx('mở kiểm duyệt', 'open moderation')}
             </Link>
           </p>
         ) : null}
       </Section>
 
-      <Section title="Theo chương trình">
+      <Section title={tx('Theo chương trình', 'By program')}>
         {rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Chưa có chương trình.{' '}
+            {tx('Chưa có chương trình.', 'No programs yet.')}{' '}
             <Link href="/programs/new" className="text-primary hover:underline">
-              Tạo mới
+              {tx('Tạo mới', 'Create')}
             </Link>
           </p>
         ) : (
@@ -133,10 +135,10 @@ export default function LibraryReadinessPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Tên</TableHead>
+                  <TableHead>{tx('Tên', 'Name')}</TableHead>
                   <TableHead>TT</TableHead>
-                  <TableHead className="text-right">Hồ sơ</TableHead>
-                  <TableHead className="text-right">Chấm</TableHead>
+                  <TableHead className="text-right">{tx('Hồ sơ')}</TableHead>
+                  <TableHead className="text-right">{tx('Chấm', 'Scored')}</TableHead>
                   <TableHead />
                 </TableRow>
               </TableHeader>
@@ -162,7 +164,7 @@ export default function LibraryReadinessPage() {
                         render={<Link href={`/programs/${program.id}/applications`} />}
                         nativeButton={false}
                       >
-                        Mở
+                        {tx('Mở', 'Open')}
                       </Button>
                     </TableCell>
                   </TableRow>

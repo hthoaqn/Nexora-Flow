@@ -1,5 +1,6 @@
 'use client'
 
+import { useTx } from '@/lib/tx'
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
@@ -47,6 +48,7 @@ const FIELDS = [
 ]
 
 export default function MyApplicationPage() {
+  const { tx } = useTx()
   const params = useParams()
   const applicationId = String(params?.applicationId ?? "")
 
@@ -103,7 +105,7 @@ export default function MyApplicationPage() {
           /* ignore */
         }
       } catch {
-        setError('Không mở được hồ sơ. Kiểm tra mã truy cập hoặc thử lại sau khi nộp.')
+        setError(tx('Không mở được hồ sơ. Kiểm tra mã truy cập hoặc thử lại sau khi nộp.', 'Could not open the application. Check your access code or try again after submitting.'))
         setApp(null)
       } finally {
         setLoading(false)
@@ -143,10 +145,10 @@ export default function MyApplicationPage() {
         consentPolicyVersion: 'nexora-consent-v1',
       })
       setApp(next)
-      toast.success('Đã xác nhận hồ sơ')
+      toast.success(tx('Đã xác nhận hồ sơ', 'Application confirmed'))
     } catch {
-      setError('Xác nhận không thành công. Vui lòng thử lại.')
-      toast.error('Xác nhận thất bại')
+      setError(tx('Xác nhận không thành công. Vui lòng thử lại.', 'Confirmation failed. Please try again.'))
+      toast.error(tx('Xác nhận thất bại', 'Confirmation failed'))
     } finally {
       setSaving(false)
     }
@@ -163,9 +165,9 @@ export default function MyApplicationPage() {
       })
       setApp(next)
       setMatchingOptIn(value)
-      toast.success(value ? 'Đã bật quyền matching' : 'Đã thu hồi quyền matching')
+      toast.success(value ? tx('Đã bật quyền matching', 'Matching consent enabled') : tx('Đã thu hồi quyền matching', 'Matching consent revoked'))
     } catch {
-      toast.error('Cập nhật không thành công')
+      toast.error(tx('Cập nhật không thành công', 'Update failed'))
     } finally {
       setSaving(false)
     }
@@ -182,31 +184,30 @@ export default function MyApplicationPage() {
 
       <main className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-6 p-4 py-10">
         <div>
-          <h1 className="font-heading text-2xl font-bold">Hồ sơ của bạn</h1>
+          <h1 className="font-heading text-2xl font-bold">{tx('Hồ sơ của bạn', 'Your application')}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Xem trạng thái và xác nhận thông tin startup.
+            {tx('Xem trạng thái và xác nhận thông tin startup.', 'Check status and confirm your startup details.')}
           </p>
         </div>
 
         {!token || !app ? (
           <Card>
             <CardHeader>
-              <CardTitle>Mở hồ sơ</CardTitle>
+              <CardTitle>{tx('Mở hồ sơ', 'Open application')}</CardTitle>
               <CardDescription>
-                Nếu bạn vừa nộp trên thiết bị này, hệ thống sẽ tự mở. Nếu không, nhập mã truy cập
-                nhận được khi nộp.
+                {tx('Nếu bạn vừa nộp trên thiết bị này, hệ thống sẽ tự mở. Nếu không, nhập mã truy cập nhận được khi nộp.', 'If you just submitted on this device it opens automatically. Otherwise, enter the access code you received.')}
               </CardDescription>
             </CardHeader>
             <form onSubmit={onUnlock}>
               <CardContent>
                 <FieldGroup>
                   <Field>
-                    <FieldLabel>Mã truy cập</FieldLabel>
+                    <FieldLabel>{tx('Mã truy cập', 'Access code')}</FieldLabel>
                     <Input
                       type="password"
                       value={accessCode}
                       onChange={(e) => setAccessCode(e.target.value)}
-                      placeholder="Nhập mã truy cập"
+                      placeholder={tx('Nhập mã truy cập', 'Enter access code')}
                       autoComplete="off"
                     />
                   </Field>
@@ -220,7 +221,7 @@ export default function MyApplicationPage() {
               <CardFooter>
                 <Button type="submit" disabled={loading} className="w-full">
                   {loading ? <Spinner data-icon="inline-start" /> : null}
-                  {loading ? 'Đang mở…' : 'Mở hồ sơ'}
+                  {loading ? tx('Đang mở…', 'Opening…') : tx('Mở hồ sơ', 'Open application')}
                 </Button>
               </CardFooter>
             </form>
@@ -236,8 +237,8 @@ export default function MyApplicationPage() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Xác nhận thông tin</CardTitle>
-                <CardDescription>Kiểm tra và chỉnh sửa trước khi gửi cho ban tổ chức.</CardDescription>
+                <CardTitle>{tx('Xác nhận thông tin', 'Confirm details')}</CardTitle>
+                <CardDescription>{tx('Kiểm tra và chỉnh sửa trước khi gửi cho ban tổ chức.', 'Review and edit before sending to the organizers.')}</CardDescription>
               </CardHeader>
               <CardContent>
                 <FieldGroup>
@@ -258,7 +259,7 @@ export default function MyApplicationPage() {
                         onCheckedChange={(v) => setMatchingOptIn(v === true)}
                       />
                       <Label htmlFor="my-optin" className="font-normal">
-                        Cho phép matching sau này
+                        {tx('Cho phép matching sau này', 'Allow future matching')}
                       </Label>
                     </div>
                   </Field>
@@ -267,15 +268,15 @@ export default function MyApplicationPage() {
               <CardFooter>
                 <Button disabled={saving} onClick={() => void onConfirm()}>
                   {saving ? <Spinner data-icon="inline-start" /> : null}
-                  Xác nhận hồ sơ
+                  {tx('Xác nhận hồ sơ', 'Confirm application')}
                 </Button>
               </CardFooter>
             </Card>
 
             <Card>
               <CardHeader>
-                <CardTitle>Quyền matching</CardTitle>
-                <CardDescription>Bạn có thể bật hoặc thu hồi bất cứ lúc nào.</CardDescription>
+                <CardTitle>{tx('Quyền matching', 'Matching consent')}</CardTitle>
+                <CardDescription>{tx('Bạn có thể bật hoặc thu hồi bất cứ lúc nào.', 'You can enable or revoke this at any time.')}</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-wrap gap-2">
                 <Button
@@ -283,7 +284,7 @@ export default function MyApplicationPage() {
                   disabled={saving || matchingOptIn}
                   onClick={() => void onConsent(true)}
                 >
-                  Bật
+                  {tx('Bật', 'Enable')}
                 </Button>
                 <Button
                   size="sm"
@@ -291,7 +292,7 @@ export default function MyApplicationPage() {
                   disabled={saving || !matchingOptIn}
                   onClick={() => void onConsent(false)}
                 >
-                  Thu hồi
+                  {tx('Thu hồi', 'Revoke')}
                 </Button>
               </CardContent>
             </Card>

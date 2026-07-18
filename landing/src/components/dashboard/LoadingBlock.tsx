@@ -1,12 +1,15 @@
+'use client'
+import { useTx } from '@/lib/tx'
 import { Spinner } from '@/components/ui/spinner'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 
 export function LoadingBlock({ label = 'Đang tải…' }: { label?: string }) {
+  const { tx } = useTx()
   return (
     <div className="flex min-h-32 flex-col items-center justify-center gap-2 rounded-xl border bg-card py-10">
       <Spinner className="size-5" />
-      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-xs text-muted-foreground">{tx(label)}</p>
     </div>
   )
 }

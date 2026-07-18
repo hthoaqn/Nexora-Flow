@@ -273,6 +273,7 @@ export type PublicProgram = {
   priorityIndustries?: string[]
   acceptedStages?: string[]
   locations?: string[]
+  hardFilters?: HardFilters
   deadline?: string | null
   status?: ProgramStatus
   requiredFields?: string[]
