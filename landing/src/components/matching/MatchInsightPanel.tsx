@@ -31,6 +31,7 @@ import {
   RefreshCwIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { MatchMarkdown } from '@/components/matching/MatchMarkdown'
 
 type Props = {
   match: any
@@ -573,9 +574,7 @@ export function MatchInsightPanel({
           </p>
         ) : null}
         {llmText ? (
-          <div className="text-xs leading-relaxed whitespace-pre-wrap">
-            {llmText}
-          </div>
+          <MatchMarkdown text={llmText} className="text-xs leading-relaxed" />
         ) : null}
         {llmErr && !llmText ? (
           <p className="text-[11px] text-amber-700 dark:text-amber-300">

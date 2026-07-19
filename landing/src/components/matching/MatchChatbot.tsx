@@ -6,7 +6,7 @@
  * model status, keyboard shortcuts, markdown-ish rendering, context chips.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   CHAT_SUGGESTIONS_EN,
   CHAT_SUGGESTIONS_VI,
@@ -18,7 +18,6 @@ import { useTx } from '@/lib/tx'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   BotIcon,
   CircleStopIcon,
@@ -35,6 +34,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { MatchMarkdown } from '@/components/matching/MatchMarkdown'
 
 export type UiMessage = {
   id: string
@@ -85,49 +85,6 @@ function saveConvos(matchId: string, list: Conversation[]) {
   } catch {
     /* */
   }
-}
-
-/** Minimal markdown: **bold**, `code`, newlines, - lists */
-function SimpleMarkdown({ text }: { text: string }) {
-  const lines = text.split('\n')
-  return (
-    <div className="space-y-1.5 text-sm leading-relaxed">
-      {lines.map((line, i) => {
-        if (!line.trim()) return <div key={i} className="h-1.5" />
-        const isBullet = /^\s*[-*•]\s+/.test(line)
-        const content = isBullet ? line.replace(/^\s*[-*•]\s+/, '') : line
-        const parts = content.split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
-        const nodes = parts.map((p, j) => {
-          if (p.startsWith('**') && p.endsWith('**')) {
-            return (
-              <strong key={j} className="font-semibold text-foreground">
-                {p.slice(2, -2)}
-              </strong>
-            )
-          }
-          if (p.startsWith('`') && p.endsWith('`')) {
-            return (
-              <code
-                key={j}
-                className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]"
-              >
-                {p.slice(1, -1)}
-              </code>
-            )
-          }
-          return <span key={j}>{p}</span>
-        })
-        return isBullet ? (
-          <div key={i} className="flex gap-2">
-            <span className="text-primary">•</span>
-            <span>{nodes}</span>
-          </div>
-        ) : (
-          <p key={i}>{nodes}</p>
-        )
-      })}
-    </div>
-  )
 }
 
 export function MatchChatbot({ match, startupProfile, className }: Props) {
@@ -563,14 +520,14 @@ export function MatchChatbot({ match, startupProfile, className }: Props) {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Sidebar history */}
-        <aside className="hidden w-36 shrink-0 flex-col border-r border-border/60 sm:flex">
-          <p className="px-2 py-1.5 text-[10px] font-semibold uppercase text-muted-foreground">
+        <aside className="hidden w-36 shrink-0 flex-col overflow-hidden border-r border-border/60 sm:flex">
+          <p className="shrink-0 px-2 py-1.5 text-[10px] font-semibold uppercase text-muted-foreground">
             {L ? 'History' : 'Lịch sử'}
           </p>
-          <ScrollArea className="flex-1 px-1">
-            <div className="flex flex-col gap-0.5 pb-2">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-2">
+            <div className="flex flex-col gap-0.5">
               {convos.length === 0 ? (
                 <p className="px-2 py-2 text-[10px] text-muted-foreground">
                   {L ? 'No chats yet' : 'Chưa có chat'}
@@ -603,13 +560,13 @@ export function MatchChatbot({ match, startupProfile, className }: Props) {
                 ))
               )}
             </div>
-          </ScrollArea>
+          </div>
         </aside>
 
-        {/* Messages */}
-        <div className="flex min-w-0 flex-1 flex-col">
-          <ScrollArea className="flex-1 px-3 py-3">
-            <div className="mx-auto flex max-w-2xl flex-col gap-3">
+        {/* Messages — native overflow so wheel/touch scroll works inside Dialog */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3">
+            <div className="mx-auto flex max-w-2xl flex-col gap-3 pb-2">
               {active.messages.length === 0 ? (
                 <div className="flex flex-col items-center gap-3 py-8 text-center">
                   <SparklesIcon className="size-8 text-primary/60" />
@@ -657,7 +614,7 @@ export function MatchChatbot({ match, startupProfile, className }: Props) {
                     ) : null}
                     <div
                       className={cn(
-                        'max-w-[85%] rounded-2xl px-3 py-2',
+                        'max-w-[85%] min-w-0 rounded-2xl px-3 py-2',
                         m.role === 'user'
                           ? 'bg-primary text-primary-foreground'
                           : m.error
@@ -667,7 +624,7 @@ export function MatchChatbot({ match, startupProfile, className }: Props) {
                     >
                       {m.role === 'assistant' ? (
                         m.content ? (
-                          <SimpleMarkdown text={m.content} />
+                          <MatchMarkdown text={m.content} />
                         ) : (
                           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                             <Loader2Icon className="size-3 animate-spin" />
@@ -711,10 +668,10 @@ export function MatchChatbot({ match, startupProfile, className }: Props) {
               )}
               <div ref={bottomRef} />
             </div>
-          </ScrollArea>
+          </div>
 
           {/* Composer */}
-          <div className="border-t border-border/70 p-2 sm:p-3">
+          <div className="shrink-0 border-t border-border/70 p-2 sm:p-3">
             <div className="flex flex-wrap gap-1 pb-2">
               <Badge variant="secondary" className="text-[10px]">
                 score {insight.totalScore}

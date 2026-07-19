@@ -840,12 +840,12 @@ export default function Matches() {
 
               <TabsContent
                 value="chat"
-                className="min-h-0 flex-1 overflow-hidden px-3 py-3 outline-none sm:px-5"
+                className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 py-3 outline-none sm:px-5 data-[hidden]:hidden"
               >
                 <MatchChatbot
                   match={analyzingMatch}
                   startupProfile={confirmedProfile}
-                  className="h-[min(68vh,620px)] border-0 shadow-none sm:border"
+                  className="min-h-0 h-[min(68vh,620px)] flex-1 border-0 shadow-none sm:border"
                 />
               </TabsContent>
             </Tabs>
