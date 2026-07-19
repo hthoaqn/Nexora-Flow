@@ -328,6 +328,8 @@ export type EvaluationCase = {
     sizeBytes: number
     mimeType: string
     locked?: boolean
+    /** Live speech-to-text capture (editable) */
+    transcript?: string
   } | null
   pitchAiJob?: {
     status: 'processing' | 'completed' | 'failed'
@@ -338,6 +340,14 @@ export type EvaluationCase = {
       unclear: string[]
       needsMore: string[]
     }
+    /** Gaps vs investor JD / thesis */
+    gapsVsJd?: string[]
+    improvements?: string[]
+    talkingPoints?: string[]
+    summary?: string
+    transcript?: string
+    coverage?: { label: string; hit: boolean; weight: number }[]
+    source?: string
     qa?: PitchQaItem[]
     is_demo: boolean
   } | null

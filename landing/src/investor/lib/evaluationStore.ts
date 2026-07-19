@@ -684,13 +684,34 @@ export function savePitchMeta(
   return hydrateCase(state.cases[idx], state)
 }
 
-/** Synthetic AI pitch analysis + 3 Q&A (ENABLE_SYNTHETIC_AI_DEMO style) */
+export type PitchAiPayload = {
+  score: number
+  qa?: PitchQaItem[]
+  publicFeedback?: {
+    strengths: string[]
+    unclear: string[]
+    needsMore: string[]
+  }
+  gapsVsJd?: string[]
+  improvements?: string[]
+  talkingPoints?: string[]
+  summary?: string
+  transcript?: string
+  coverage?: { label: string; hit: boolean; weight: number }[]
+  source?: string
+  is_demo?: boolean
+}
+
+/**
+ * Save pitch AI analysis (real transcript vs investor JD, or demo fallback).
+ */
 export function runPitchAiAnalysis(
   caseId: string,
   startupId: string,
   idempotencyKey?: string,
+  analysis?: PitchAiPayload | null,
 ): EvaluationCase | null {
-  const key = idempotencyKey || `pitch-ai-${caseId}`
+  const key = idempotencyKey || `pitch-ai-${caseId}-${analysis?.score ?? 'demo'}`
   if (checkIdempotency(key)) {
     return getEvaluationCase(caseId, startupId)
   }
@@ -700,7 +721,8 @@ export function runPitchAiAnalysis(
   )
   if (idx < 0) return null
   const inv = DEMO_INVESTORS.find((i) => i.id === state.cases[idx].investorId)
-  const qa: PitchQaItem[] = [
+
+  const demoQa: PitchQaItem[] = [
     {
       id: 'q1',
       question: inv
@@ -718,22 +740,51 @@ export function runPitchAiAnalysis(
         'Why is now the right time for this team to raise from this thesis?',
     },
   ]
-  const score = 62 + Math.floor(Math.random() * 25)
+
+  const isReal = !!(analysis && (analysis.transcript || analysis.summary))
+  const score =
+    analysis?.score != null
+      ? Math.max(0, Math.min(100, Math.round(Number(analysis.score))))
+      : 62 + Math.floor(Math.random() * 25)
+
+  const qa =
+    analysis?.qa?.length
+      ? analysis.qa.map((q, i) => ({
+          id: q.id || `q${i + 1}`,
+          question: q.question,
+          textAnswer: (q as PitchQaItem).textAnswer,
+        }))
+      : demoQa
+
   state.cases[idx].pitchAiJob = {
     status: 'completed',
     score,
     qa,
-    is_demo: true,
-    publicFeedback: {
-      strengths: [
-        'Clear problem framing',
-        'Credible team narrative',
-      ],
-      unclear: ['Unit economics still light'],
-      needsMore: ['Traction evidence or pilot LOI'],
+    is_demo: analysis?.is_demo ?? !isReal,
+    publicFeedback: analysis?.publicFeedback ?? {
+      strengths: ['Clear problem framing', 'Credible team narrative'],
+      unclear: analysis?.gapsVsJd?.slice(0, 2) || ['Unit economics still light'],
+      needsMore:
+        analysis?.improvements?.slice(0, 2) ||
+        ['Traction evidence or pilot LOI'],
     },
+    gapsVsJd: analysis?.gapsVsJd,
+    improvements: analysis?.improvements,
+    talkingPoints: analysis?.talkingPoints,
+    summary: analysis?.summary,
+    transcript: analysis?.transcript,
+    coverage: analysis?.coverage,
+    source: analysis?.source || (isReal ? 'api' : 'demo'),
   }
-  // AI score only — investorScore stays null until investor reviews (§ score separation)
+
+  if (analysis?.transcript && state.cases[idx].pitchMeta) {
+    state.cases[idx].pitchMeta = {
+      ...state.cases[idx].pitchMeta!,
+      transcript: analysis.transcript,
+    }
+  }
+
+  // AI score only — investorScore stays null until investor reviews
   state.cases[idx].aiScore = score
   state.cases[idx].investorScore = null
   state.cases[idx].status = 'round_1_submitted'
@@ -747,14 +798,20 @@ export function runPitchAiAnalysis(
     evaluationCaseId: caseId,
     matchingId: state.cases[idx].matchingId,
     actorType: 'ai',
-    actorId: 'gemini-demo',
+    actorId: isReal ? 'pitch-analysis' : 'gemini-demo',
     eventType: 'pitch_ai_completed',
-    payload: { score, qaCount: 3, is_demo: true },
+    payload: {
+      score,
+      qaCount: qa.length,
+      is_demo: !isReal,
+      source: analysis?.source,
+      hasTranscript: !!analysis?.transcript,
+    },
     dataVersion: 1,
     visibility: 'shared',
   })
   write(state)
-  // Demo auto-pass pitch after AI → unlock sim
+  // Auto-pass pitch after AI → unlock sim (demo pipeline)
   return advanceAfterPitchReview(caseId, startupId, true)
 }
 

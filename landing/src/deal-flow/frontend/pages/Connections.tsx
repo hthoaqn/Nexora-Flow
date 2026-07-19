@@ -31,7 +31,13 @@ import {
   CalendarClock,
   ClipboardList,
   ExternalLink,
+  Sparkles,
+  Loader2,
 } from 'lucide-react'
+import {
+  isSpeechRecognitionSupported,
+  startSpeechTranscript,
+} from '@/lib/speech-transcript'
 import {
   PortalHero,
   PortalEmpty,
@@ -163,13 +169,16 @@ function StageStepper({ status, lang }) {
 
 // ─── Video answer recorder (MediaRecorder) ───────────────────────────────────
 
-function VideoRecorder({ onRecorded, disabled, lang }) {
+function VideoRecorder({ onRecorded, onTranscript, disabled, lang }) {
   const videoRef = useRef(null)
   const recorderRef = useRef(null)
   const chunksRef = useRef([])
   const streamRef = useRef(null)
+  const speechRef = useRef(null)
+  const finalRef = useRef('')
   const [state, setState] = useState('idle') // idle | recording | recorded
   const [previewUrl, setPreviewUrl] = useState(null)
+  const [liveHint, setLiveHint] = useState('')
 
   const stopStream = () => {
     streamRef.current?.getTracks().forEach((t) => t.stop())
@@ -179,6 +188,11 @@ function VideoRecorder({ onRecorded, disabled, lang }) {
   useEffect(() => {
     return () => {
       stopStream()
+      try {
+        speechRef.current?.stop?.()
+      } catch {
+        /* */
+      }
       if (previewUrl) URL.revokeObjectURL(previewUrl)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -203,6 +217,18 @@ function VideoRecorder({ onRecorded, disabled, lang }) {
         videoRef.current.muted = true
         await videoRef.current.play().catch(() => {})
       }
+      finalRef.current = ''
+      setLiveHint('')
+      if (isSpeechRecognitionSupported()) {
+        speechRef.current = startSpeechTranscript({
+          lang: lang === 'en' ? 'en' : 'vi',
+          onUpdate: (partial, finalSoFar) => {
+            finalRef.current = finalSoFar
+            setLiveHint(partial || finalSoFar)
+            onTranscript?.(finalSoFar, partial)
+          },
+        })
+      }
       const mime = pickRecorderMime()
       let rec
       try {
@@ -213,6 +239,12 @@ function VideoRecorder({ onRecorded, disabled, lang }) {
       chunksRef.current = []
       rec.ondataavailable = (e) => e.data.size > 0 && chunksRef.current.push(e.data)
       rec.onstop = () => {
+        try {
+          speechRef.current?.stop?.()
+        } catch {
+          /* */
+        }
+        speechRef.current = null
         const blob = new Blob(chunksRef.current, { type: 'video/webm' })
         const url = URL.createObjectURL(blob)
         setPreviewUrl(url)
@@ -223,7 +255,9 @@ function VideoRecorder({ onRecorded, disabled, lang }) {
         }
         stopStream()
         setState('recorded')
+        setLiveHint('')
         onRecorded(blob)
+        onTranscript?.(finalRef.current || '', '')
       }
       recorderRef.current = rec
       rec.start()
@@ -266,11 +300,13 @@ function VideoRecorder({ onRecorded, disabled, lang }) {
     if (previewUrl) URL.revokeObjectURL(previewUrl)
     setPreviewUrl(null)
     setState('idle')
+    setLiveHint('')
+    finalRef.current = ''
     onRecorded(null)
+    onTranscript?.('', '')
     if (videoRef.current) videoRef.current.src = ''
   }
 
-  // Keep <video> mounted so ref exists before getUserMedia attaches the stream
   useEffect(() => {
     if (state === 'recording' && streamRef.current && videoRef.current) {
       videoRef.current.srcObject = streamRef.current
@@ -290,6 +326,11 @@ function VideoRecorder({ onRecorded, disabled, lang }) {
           state === 'idle' ? 'hidden' : ''
         }`}
       />
+      {state === 'recording' && liveHint ? (
+        <p className="text-[11px] italic text-muted-foreground line-clamp-2">
+          STT: …{liveHint}
+        </p>
+      ) : null}
       <div className="flex flex-wrap gap-2">
         {state === 'idle' && (
           <SoftButton size="sm" variant="outline" disabled={disabled} onClick={start}>
@@ -324,10 +365,80 @@ function Round2Panel({ conn, lang, onSubmitted }) {
   const questions = conn.round2?.questions || []
   const [texts, setTexts] = useState(() => questions.map(() => ''))
   const [videos, setVideos] = useState(() => questions.map(() => null))
+  const [transcripts, setTranscripts] = useState(() => questions.map(() => ''))
+  const [aiByQ, setAiByQ] = useState(() => questions.map(() => null))
+  const [aiLoading, setAiLoading] = useState(() => questions.map(() => false))
   const [submitting, setSubmitting] = useState(false)
   const [agreeShare, setAgreeShare] = useState(false)
+  const L = lang === 'en'
 
   const answered = questions.every((_, i) => texts[i]?.trim() || videos[i])
+
+  const partnerJd = () => {
+    const p = conn.partner || {}
+    return {
+      name: p.organizationName || p.name,
+      thesis: p.description,
+      description: p.description,
+      industries: p.interestedIndustries || p.industries,
+      stages: p.preferredStages,
+      requirements: p.partnershipTypes,
+      jdText: [
+        p.description,
+        (p.interestedIndustries || []).join(', '),
+        (p.partnershipTypes || []).join(', '),
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    }
+  }
+
+  const analyzeAnswer = async (i) => {
+    const transcript = (transcripts[i] || texts[i] || '').trim()
+    if (!transcript) {
+      toast.error(
+        L
+          ? 'Need text or video transcript for this answer'
+          : 'Cần nội dung text/transcript cho câu này',
+      )
+      return
+    }
+    setAiLoading((arr) => arr.map((v, j) => (j === i ? true : v)))
+    try {
+      const res = await fetch('/api/ai/pitch-analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: `Question: ${questions[i]}\n\nAnswer: ${transcript}`,
+          lang: L ? 'en' : 'vi',
+          useLlm: true,
+          jd: {
+            ...partnerJd(),
+            jdText: `${partnerJd().jdText || ''}\n\nInterview question: ${questions[i]}`,
+          },
+        }),
+      })
+      const body = await res.json()
+      if (!res.ok || !body?.success) {
+        throw new Error(body?.message || `HTTP ${res.status}`)
+      }
+      const a = body.data?.analysis
+      setAiByQ((arr) => arr.map((v, j) => (j === i ? a : v)))
+      // Prefill text from transcript if empty
+      if (!texts[i]?.trim() && transcript) {
+        setTexts((arr) => arr.map((t, j) => (j === i ? transcript : t)))
+      }
+      toast.success(
+        L
+          ? `AI score ${a.score}/100 vs partner brief`
+          : `AI chấm ${a.score}/100 so với brief đối tác`,
+      )
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'AI failed')
+    } finally {
+      setAiLoading((arr) => arr.map((v, j) => (j === i ? false : v)))
+    }
+  }
 
   const submit = async () => {
     if (!agreeShare) {
@@ -427,7 +538,73 @@ function Round2Panel({ conn, lang, onSubmitted }) {
             onRecorded={(blob) =>
               setVideos((arr) => arr.map((v, j) => (j === i ? blob : v)))
             }
+            onTranscript={(finalT) => {
+              if (finalT) {
+                setTranscripts((arr) =>
+                  arr.map((t, j) => (j === i ? finalT : t)),
+                )
+                setTexts((arr) =>
+                  arr.map((t, j) => (j === i && !t?.trim() ? finalT : t)),
+                )
+              }
+            }}
           />
+          {transcripts[i] ? (
+            <p className="text-[11px] text-muted-foreground">
+              <strong>STT:</strong> {transcripts[i].slice(0, 280)}
+              {transcripts[i].length > 280 ? '…' : ''}
+            </p>
+          ) : null}
+          <SoftButton
+            size="sm"
+            variant="outline"
+            className="rounded-full"
+            disabled={submitting || aiLoading[i] || !(transcripts[i] || texts[i])?.trim()}
+            onClick={() => void analyzeAnswer(i)}
+          >
+            {aiLoading[i] ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="size-3.5" />
+            )}
+            {L
+              ? 'AI analyze answer vs partner JD'
+              : 'AI phân tích câu trả lời theo JD đối tác'}
+          </SoftButton>
+          {aiByQ[i] ? (
+            <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs">
+              <p className="font-semibold text-primary">
+                {L ? 'AI feedback' : 'Phản hồi AI'} · {aiByQ[i].score}/100
+              </p>
+              <p className="text-muted-foreground">
+                {L ? aiByQ[i].summaryEn : aiByQ[i].summaryVi}
+              </p>
+              {(aiByQ[i].gapsVsJd || []).length ? (
+                <div>
+                  <p className="font-medium">
+                    {L ? 'Gaps vs partner brief' : 'Lệch so với brief đối tác'}
+                  </p>
+                  <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-muted-foreground">
+                    {aiByQ[i].gapsVsJd.slice(0, 4).map((g, gi) => (
+                      <li key={gi}>{g}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {(aiByQ[i].improvements || []).length ? (
+                <div>
+                  <p className="font-medium">
+                    {L ? 'Improve' : 'Cải thiện'}
+                  </p>
+                  <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-muted-foreground">
+                    {aiByQ[i].improvements.slice(0, 4).map((g, gi) => (
+                      <li key={gi}>{g}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ))}
       <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-primary/25 bg-background px-3 py-3 text-xs">
