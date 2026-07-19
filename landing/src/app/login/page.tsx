@@ -206,11 +206,16 @@ function UnifiedLogin() {
           )
           return
         }
+        let sessionUser = user
         const st = String(user.status || 'active').toLowerCase()
         if (st === 'pending') {
-          setStartupAuth(user, accessToken, refreshToken || '')
-          window.location.href = '/pending'
-          return
+          const { ensureAccountActive } = await import('@/lib/auto-approve-client')
+          sessionUser = await ensureAccountActive(user)
+          if (String(sessionUser.status || '').toLowerCase() === 'pending') {
+            setStartupAuth(sessionUser, accessToken, refreshToken || '')
+            window.location.href = '/pending?auto=1'
+            return
+          }
         }
         if (st === 'rejected') {
           setSError(
@@ -221,8 +226,8 @@ function UnifiedLogin() {
           )
           return
         }
-        setStartupAuth(user, accessToken, refreshToken || '')
-        toast.success(tx(`Chào mừng, ${user.fullName || user.email}!`, `Welcome, ${user.fullName || user.email}!`))
+        setStartupAuth(sessionUser, accessToken, refreshToken || '')
+        toast.success(tx(`Chào mừng, ${sessionUser.fullName || sessionUser.email}!`, `Welcome, ${sessionUser.fullName || sessionUser.email}!`))
         window.location.href = '/dashboard'
         return
       }

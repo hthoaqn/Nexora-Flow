@@ -5,9 +5,14 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { useStartupStore } from '../store/useStartupStore'
+import { useAuthStore } from '../store/useAuthStore'
 import { usePortalI18n } from '../i18n'
 import { toast } from 'sonner'
 import { isInvestorPipelineEnabled } from '@/investor/flags'
+import {
+  isPrepDone,
+  markPrepOpenedMatching,
+} from '../lib/prepReadiness'
 import {
   Sparkles,
   Search,
@@ -19,7 +24,14 @@ import {
   RefreshCw,
   GitCompareArrows,
   Handshake,
+  Lightbulb,
+  Bot,
+  BarChart3,
 } from 'lucide-react'
+import { MatchInsightPanel } from '@/components/matching/MatchInsightPanel'
+import { MatchChatbot } from '@/components/matching/MatchChatbot'
+import { analyzeMatch } from '@/lib/match-analysis'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   PortalHero,
   PortalSection,
@@ -66,11 +78,13 @@ function scorePct(m, key) {
 
 export default function Matches() {
   const navigate = useNavigate()
+  const { user } = useAuthStore()
   const { confirmedProfile, isDirty } = useStartupStore()
   const { t, lang } = usePortalI18n()
 
   const [matches, setMatches] = useState([])
   const [loading, setLoading] = useState(true)
+  const [showPrepHint, setShowPrepHint] = useState(false)
   const [search, setSearch] = useState('')
   const [orgType, setOrgType] = useState('')
   const [partnershipType, setPartnershipType] = useState('')
@@ -78,6 +92,8 @@ export default function Matches() {
   const [minScore, setMinScore] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
   const [connectingMatch, setConnectingMatch] = useState(null)
+  const [analyzingMatch, setAnalyzingMatch] = useState(null)
+  const [insightTab, setInsightTab] = useState('analysis')
   const [introMessage, setIntroMessage] = useState('')
   const [sendingConnection, setSendingConnection] = useState(false)
   const [recalculating, setRecalculating] = useState(false)
@@ -139,6 +155,7 @@ export default function Matches() {
       toast.error(t.matches.emptyDesc)
       return
     }
+    if (user?.id) markPrepOpenedMatching(user.id)
     setRecalculating(true)
     const toastId = toast.loading(t.matches.running)
     try {
@@ -146,6 +163,7 @@ export default function Matches() {
       if (res.data?.success) {
         toast.success(t.matches.run, { id: toastId })
         setMatches(dedupeMatches(Array.isArray(res.data.data) ? res.data.data : []))
+        setShowPrepHint(false)
       }
     } catch (e) {
       const code = e?.response?.data?.error?.code || ''
@@ -165,6 +183,19 @@ export default function Matches() {
     fetchMatches()
     fetchExistingConnections()
   }, [])
+
+  useEffect(() => {
+    // Soft nudge: profile exists, never ran prep, no matches yet
+    if (!confirmedProfile || !user?.id) {
+      setShowPrepHint(false)
+      return
+    }
+    if (matches.length > 0 || isPrepDone(user.id)) {
+      setShowPrepHint(false)
+      return
+    }
+    setShowPrepHint(true)
+  }, [confirmedProfile, user?.id, matches.length])
 
   const handleOpenConnect = (m) => {
     const partnerId = m.partner?.id || m.partnerId
@@ -290,6 +321,42 @@ export default function Matches() {
 
   return (
     <div className="space-y-5">
+      {showPrepHint ? (
+        <Alert className="border-primary/25 bg-primary/5">
+          <Lightbulb className="size-4 text-primary" />
+          <AlertTitle>
+            {lang === 'en'
+              ? 'Optional: AI mentor prep first'
+              : 'Tùy chọn: Mentor AI chuẩn bị trước'}
+          </AlertTitle>
+          <AlertDescription className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              {lang === 'en'
+                ? 'Not an interview — get 2–3 improvement tips before partners see your profile. You can still run matching now.'
+                : 'Không phải phỏng vấn — nhận 2–3 gợi ý cải thiện trước khi đối tác thấy hồ sơ. Vẫn có thể so khớp ngay.'}
+            </span>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 rounded-full"
+                onClick={() => setShowPrepHint(false)}
+              >
+                {lang === 'en' ? 'Dismiss' : 'Để sau'}
+              </Button>
+              <Button
+                size="sm"
+                className="h-8 rounded-full"
+                onClick={() => navigate('/prep')}
+              >
+                <Lightbulb className="size-3.5" />
+                {lang === 'en' ? 'Open prep' : 'Mở chuẩn bị'}
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       <PortalHero
         eyebrow={
           <>
@@ -516,9 +583,74 @@ export default function Matches() {
                         {matchedTech.join(', ') || '—'}
                       </strong>
                     </p>
+                    {(() => {
+                      const insight = analyzeMatch({
+                        totalScore: score,
+                        scoreBreakdown: m.scoreBreakdown || m.breakdown,
+                        matchedReasons: m.matchedReasons,
+                        risks: m.risks,
+                        missingRequirements: m.missingRequirements,
+                        recommendation: m.recommendation,
+                        startupName: confirmedProfile?.startupName,
+                        partnerName: partner.organizationName,
+                      })
+                      const weak = insight.weaknesses.slice(0, 3)
+                      if (!weak.length && score >= 70) return null
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAnalyzingMatch(m)
+                            setInsightTab('analysis')
+                          }}
+                          className="w-full rounded-lg border border-amber-500/25 bg-amber-500/5 px-2.5 py-2 text-left transition hover:border-primary/40 hover:bg-primary/5"
+                        >
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                            {lang === 'en' ? 'Why this score?' : 'Vì sao điểm này?'}
+                          </p>
+                          <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
+                            {lang === 'en' ? insight.summaryEn : insight.summaryVi}
+                          </p>
+                          {weak.length ? (
+                            <p className="mt-1 text-[10px] text-rose-600 dark:text-rose-300">
+                              {lang === 'en' ? 'Weak: ' : 'Yếu: '}
+                              {weak
+                                .map((d) =>
+                                  `${lang === 'en' ? d.labelEn : d.labelVi} ${d.score}`,
+                                )
+                                .join(' · ')}
+                            </p>
+                          ) : null}
+                        </button>
+                      )
+                    })()}
                   </div>
 
-                  <div className="mt-auto flex justify-end border-t border-border/70 px-5 py-3">
+                  <div className="mt-auto flex flex-wrap items-center justify-end gap-2 border-t border-border/70 px-5 py-3">
+                    <SoftButton
+                      size="sm"
+                      variant="outline"
+                      className="rounded-full border-primary/35 bg-primary/10 font-semibold"
+                      onClick={() => {
+                        setAnalyzingMatch(m)
+                        setInsightTab('analysis')
+                      }}
+                    >
+                      <BarChart3 className="size-3.5" />
+                      {lang === 'en' ? 'Full analysis' : 'Phân tích đầy đủ'}
+                    </SoftButton>
+                    <SoftButton
+                      size="sm"
+                      variant="outline"
+                      className="rounded-full"
+                      onClick={() => {
+                        setAnalyzingMatch(m)
+                        setInsightTab('chat')
+                      }}
+                    >
+                      <Bot className="size-3.5" />
+                      AI Coach
+                    </SoftButton>
                     {(() => {
                       const pid = String(partner.id || m.partnerId || '')
                       const st = pid ? connectedByPartner[pid] : null
@@ -635,6 +767,89 @@ export default function Matches() {
               {sendingConnection ? t.matches.sending : t.matches.send}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Full analysis + AI Coach (production) */}
+      <Dialog
+        open={!!analyzingMatch}
+        onOpenChange={(o) => {
+          if (!o) {
+            setAnalyzingMatch(null)
+            setInsightTab('analysis')
+          }
+        }}
+      >
+        <DialogContent
+          className="flex max-h-[92vh] w-[min(96vw,56rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl"
+          showCloseButton
+        >
+          <DialogHeader className="shrink-0 border-b border-border/70 px-5 py-4 text-left">
+            <DialogTitle className="flex flex-wrap items-center gap-2">
+              <Sparkles className="size-4 text-primary" />
+              {lang === 'en'
+                ? 'Full match analysis & AI Coach'
+                : 'Phân tích so khớp đầy đủ & AI Coach'}
+              <span className="font-normal text-muted-foreground">
+                · {analyzingMatch?.partner?.organizationName || '—'}
+              </span>
+              {analyzingMatch?.totalScore != null ? (
+                <Badge variant="secondary" className="tabular-nums">
+                  {Number(analyzingMatch.totalScore)}/100
+                </Badge>
+              ) : null}
+            </DialogTitle>
+            <DialogDescription>
+              {lang === 'en'
+                ? '7-dimension diagram, why the score is low, strengths/weaknesses, DeepSeek narrative, and full chat coach.'
+                : 'Sơ đồ 7 chiều, vì sao điểm thấp, điểm mạnh/yếu, narrative DeepSeek, và chatbot coach đầy đủ.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {analyzingMatch ? (
+            <Tabs
+              value={insightTab}
+              onValueChange={setInsightTab}
+              className="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden"
+            >
+              <div className="shrink-0 border-b border-border/60 px-5 py-2">
+                <TabsList className="w-full max-w-md">
+                  <TabsTrigger value="analysis" className="flex-1 gap-1.5">
+                    <BarChart3 className="size-3.5" />
+                    {lang === 'en' ? 'Diagram & analysis' : 'Sơ đồ & phân tích'}
+                  </TabsTrigger>
+                  <TabsTrigger value="chat" className="flex-1 gap-1.5">
+                    <Bot className="size-3.5" />
+                    AI Coach
+                  </TabsTrigger>
+                </TabsList>
+              </div>
+
+              <TabsContent
+                value="analysis"
+                className="min-h-0 flex-1 overflow-y-auto px-5 py-4 outline-none"
+              >
+                <MatchInsightPanel
+                  match={analyzingMatch}
+                  startupProfile={confirmedProfile}
+                  lang={lang === 'en' ? 'en' : 'vi'}
+                  autoDeepAnalysis
+                  onOpenChat={() => setInsightTab('chat')}
+                />
+              </TabsContent>
+
+              <TabsContent
+                value="chat"
+                className="min-h-0 flex-1 overflow-hidden px-3 py-3 outline-none sm:px-5"
+              >
+                <MatchChatbot
+                  match={analyzingMatch}
+                  startupProfile={confirmedProfile}
+                  className="h-[min(68vh,620px)] border-0 shadow-none sm:border"
+                />
+              </TabsContent>
+            </Tabs>
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>
